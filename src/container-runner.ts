@@ -207,9 +207,7 @@ function buildVolumeMounts(
     });
 
     try {
-      const emailConfig = JSON.parse(
-        fs.readFileSync(emailConfigFile, 'utf-8'),
-      );
+      const emailConfig = JSON.parse(fs.readFileSync(emailConfigFile, 'utf-8'));
       if (emailConfig.accounts) {
         for (const [name, account] of Object.entries(
           emailConfig.accounts as Record<string, { credentialsDir: string }>,

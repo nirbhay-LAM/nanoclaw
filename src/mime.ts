@@ -5,8 +5,7 @@ const MIME_MAP: Record<string, string> = {
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.pptx':
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  '.xlsx':
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.pdf': 'application/pdf',
   '.csv': 'text/csv',
   '.txt': 'text/plain',

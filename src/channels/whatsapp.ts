@@ -289,7 +289,10 @@ export class WhatsAppChannel implements Channel {
         : caption;
 
     if (!this.connected) {
-      logger.warn({ jid, filename }, 'WA disconnected, cannot queue file sends');
+      logger.warn(
+        { jid, filename },
+        'WA disconnected, cannot queue file sends',
+      );
       return;
     }
     try {
