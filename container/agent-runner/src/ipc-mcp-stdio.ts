@@ -63,6 +63,54 @@ server.tool(
 );
 
 server.tool(
+  'send_file',
+  'Send a file to the user or group as a document attachment via WhatsApp. The file must exist in /workspace/group/files/. Create files there first using the office-docs skill or any other method, then call this tool to deliver them.',
+  {
+    file_path: z
+      .string()
+      .describe(
+        'Path to the file relative to /workspace/group/files/ (e.g., "report.docx")',
+      ),
+    caption: z
+      .string()
+      .optional()
+      .describe('Optional caption/message to accompany the file'),
+  },
+  async (args) => {
+    const fullPath = `/workspace/group/files/${args.file_path}`;
+    if (!fs.existsSync(fullPath)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error: File not found at ${fullPath}. Make sure you created the file in /workspace/group/files/ first.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    writeIpcFile(MESSAGES_DIR, {
+      type: 'file',
+      chatJid,
+      filePath: args.file_path,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `File "${args.file_path}" queued for delivery.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 

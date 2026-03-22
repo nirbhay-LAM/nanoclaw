@@ -276,6 +276,35 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  async sendFile(
+    jid: string,
+    buffer: Buffer,
+    filename: string,
+    mimetype: string,
+    caption?: string,
+  ): Promise<void> {
+    const prefixedCaption =
+      caption && !ASSISTANT_HAS_OWN_NUMBER
+        ? `${ASSISTANT_NAME}: ${caption}`
+        : caption;
+
+    if (!this.connected) {
+      logger.warn({ jid, filename }, 'WA disconnected, cannot queue file sends');
+      return;
+    }
+    try {
+      await this.sock.sendMessage(jid, {
+        document: buffer,
+        mimetype,
+        fileName: filename,
+        caption: prefixedCaption,
+      });
+      logger.info({ jid, filename, size: buffer.length }, 'File sent');
+    } catch (err) {
+      logger.error({ jid, filename, err }, 'Failed to send file');
+    }
+  }
+
   isConnected(): boolean {
     return this.connected;
   }

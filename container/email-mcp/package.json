@@ -1,0 +1,19 @@
+{
+  "name": "nanoclaw-email-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Multi-identity Gmail MCP server for NanoClaw",
+  "main": "dist/email-mcp.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "googleapis": "^146.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  }
+}

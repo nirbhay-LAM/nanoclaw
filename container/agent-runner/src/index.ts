@@ -407,7 +407,10 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        ...(fs.existsSync('/workspace/email/config/email-identities.json')
+          ? ['mcp__email__*']
+          : []),
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -423,6 +426,16 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        // Email MCP: pre-compiled at Docker build time, only started if config exists
+        ...(fs.existsSync('/workspace/email/config/email-identities.json')
+          ? {
+              email: {
+                command: 'node',
+                args: ['/app/email-mcp/dist/email-mcp.js'],
+                env: {},
+              },
+            }
+          : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

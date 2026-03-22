@@ -76,16 +76,9 @@ function buildVolumeMounts(
       readonly: true,
     });
 
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the credential proxy, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
+    // .env shadowing is handled inside the container by entrypoint.sh
+    // (mount --bind /dev/null over .env). Apple Container only supports
+    // directory mounts, so we cannot shadow files from the host side.
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -199,6 +192,46 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Email identity config and credentials (read-only)
+  const emailConfigDir = path.join(
+    process.env.HOME || '/root',
+    '.config',
+    'nanoclaw',
+  );
+  const emailConfigFile = path.join(emailConfigDir, 'email-identities.json');
+  if (fs.existsSync(emailConfigFile)) {
+    mounts.push({
+      hostPath: emailConfigDir,
+      containerPath: '/workspace/email/config',
+      readonly: true,
+    });
+
+    try {
+      const emailConfig = JSON.parse(
+        fs.readFileSync(emailConfigFile, 'utf-8'),
+      );
+      if (emailConfig.accounts) {
+        for (const [name, account] of Object.entries(
+          emailConfig.accounts as Record<string, { credentialsDir: string }>,
+        )) {
+          const credDir = (account.credentialsDir || '').replace(
+            /^~/,
+            process.env.HOME || '/root',
+          );
+          if (credDir && fs.existsSync(credDir)) {
+            mounts.push({
+              hostPath: credDir,
+              containerPath: `/workspace/email/creds/${name}`,
+              readonly: true,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to read email identity config for mounts');
+    }
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -218,6 +251,9 @@ function buildContainerArgs(
   isMain: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Container memory — 1GB baseline (email-mcp pre-compiled, runtime TSC is lightweight)
+  args.push('--memory', '1024MB');
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
