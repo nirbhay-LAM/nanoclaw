@@ -54,6 +54,7 @@ beforeEach(() => {
   deps = {
     sendMessage: async () => {},
     sendFile: async () => {},
+    refreshSession: () => {},
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;

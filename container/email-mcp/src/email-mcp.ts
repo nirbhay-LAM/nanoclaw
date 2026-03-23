@@ -83,6 +83,14 @@ function createGmailClient(accountName: string) {
   return google.gmail({ version: 'v1', auth });
 }
 
+/** RFC 2047 encoded-word for non-ASCII header values. */
+function encodeRfc2047(text: string): string {
+  // Only encode if there are non-ASCII characters
+  if (/^[\x20-\x7E]*$/.test(text)) return text;
+  const encoded = Buffer.from(text, 'utf-8').toString('base64');
+  return `=?UTF-8?B?${encoded}?=`;
+}
+
 function buildRawEmail(opts: {
   from: string;
   fromName: string;
@@ -94,9 +102,9 @@ function buildRawEmail(opts: {
   const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const lines: string[] = [];
 
-  lines.push(`From: "${opts.fromName}" <${opts.from}>`);
+  lines.push(`From: "${encodeRfc2047(opts.fromName)}" <${opts.from}>`);
   lines.push(`To: ${opts.to}`);
-  lines.push(`Subject: ${opts.subject}`);
+  lines.push(`Subject: ${encodeRfc2047(opts.subject)}`);
   lines.push('MIME-Version: 1.0');
 
   if (opts.attachments && opts.attachments.length > 0) {

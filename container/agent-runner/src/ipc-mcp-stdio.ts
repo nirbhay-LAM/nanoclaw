@@ -63,6 +63,28 @@ server.tool(
 );
 
 server.tool(
+  'refresh_session',
+  'Reset your session to start fresh. Call this AFTER saving important context to memory (CLAUDE.md and auto-memory). Your memory persists across refreshes. The next message will start a clean session.',
+  {},
+  async () => {
+    writeIpcFile(TASKS_DIR, {
+      type: 'refresh_session',
+      groupFolder,
+      chatJid,
+      timestamp: new Date().toISOString(),
+    });
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Refresh requested. Session will reset on next message.',
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'send_file',
   'Send a file to the user or group as a document attachment via WhatsApp. The file must exist in /workspace/group/files/. Create files there first using the office-docs skill or any other method, then call this tool to deliver them.',
   {

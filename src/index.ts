@@ -38,6 +38,7 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
+  deleteSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -655,6 +656,11 @@ async function main(): Promise<void> {
       for (const group of Object.values(registeredGroups)) {
         writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
       }
+    },
+    refreshSession: (groupFolder: string) => {
+      delete sessions[groupFolder];
+      deleteSession(groupFolder);
+      logger.info({ groupFolder }, 'Session cleared for refresh');
     },
   });
   queue.setProcessMessagesFn(processGroupMessages);

@@ -31,6 +31,7 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+  refreshSession: (groupFolder: string) => void;
 }
 
 let ipcWatcherRunning = false;
@@ -519,6 +520,25 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'refresh_session': {
+      // Any group can refresh its own session; main can refresh any
+      const targetFolder =
+        (data.groupFolder as string | undefined) || sourceGroup;
+      if (!isMain && targetFolder !== sourceGroup) {
+        logger.warn(
+          { sourceGroup, targetFolder },
+          'Unauthorized refresh_session attempt blocked',
+        );
+        break;
+      }
+      deps.refreshSession(targetFolder);
+      logger.info(
+        { targetFolder, sourceGroup },
+        'Session refresh requested via IPC',
+      );
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
