@@ -1,8 +1,9 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
+import { DATA_DIR, MAX_CONCURRENT_CONTAINERS, WATCHDOG_TIMEOUT } from './config.js';
+import { stopContainer } from './container-runtime.js';
 import { logger } from './logger.js';
 
 interface QueuedTask {
@@ -25,6 +26,8 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  watchdogTimer: ReturnType<typeof setTimeout> | null;
+  lastActivityAt: number;
 }
 
 export class GroupQueue {
@@ -49,6 +52,8 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        watchdogTimer: null,
+        lastActivityAt: 0,
       };
       this.groups.set(groupJid, state);
     }
@@ -159,8 +164,18 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskContainer)
+    if (!state.active || !state.groupFolder || state.isTaskContainer) {
+      logger.debug(
+        {
+          groupJid,
+          active: state.active,
+          groupFolder: state.groupFolder,
+          isTask: state.isTaskContainer,
+        },
+        'sendMessage: no eligible active container',
+      );
       return false;
+    }
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
@@ -191,6 +206,75 @@ export class GroupQueue {
     } catch {
       // ignore
     }
+  }
+
+  /**
+   * Start a watchdog timer. If no activity (resetWatchdog) occurs within
+   * the timeout, the container is killed and messages are re-queued.
+   */
+  startWatchdog(groupJid: string, timeoutMs: number = WATCHDOG_TIMEOUT): void {
+    const state = this.getGroup(groupJid);
+    this.clearWatchdog(groupJid);
+    state.lastActivityAt = Date.now();
+    state.watchdogTimer = setTimeout(() => {
+      this.handleStuckContainer(groupJid);
+    }, timeoutMs);
+  }
+
+  /** Reset the watchdog timer on agent activity. */
+  resetWatchdog(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    state.lastActivityAt = Date.now();
+    if (state.watchdogTimer) {
+      this.startWatchdog(groupJid);
+    }
+  }
+
+  /** Clear the watchdog timer (container exited normally). */
+  clearWatchdog(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    if (state.watchdogTimer) {
+      clearTimeout(state.watchdogTimer);
+      state.watchdogTimer = null;
+    }
+  }
+
+  private handleStuckContainer(groupJid: string): void {
+    const state = this.getGroup(groupJid);
+    const idleSec = Math.round((Date.now() - state.lastActivityAt) / 1000);
+    logger.warn(
+      {
+        groupJid,
+        containerName: state.containerName,
+        idleSeconds: idleSec,
+      },
+      'Watchdog: container unresponsive, killing and re-queuing',
+    );
+
+    // Kill the stuck container process
+    if (state.process && !state.process.killed) {
+      state.process.kill('SIGKILL');
+    }
+    // Force-stop the container by name
+    if (state.containerName) {
+      try {
+        execSync(stopContainer(state.containerName), { stdio: 'pipe' });
+      } catch {
+        /* already stopped */
+      }
+    }
+
+    // Reset state so drainGroup can spawn a new container
+    state.active = false;
+    state.idleWaiting = false;
+    state.process = null;
+    state.containerName = null;
+    state.watchdogTimer = null;
+    this.activeCount--;
+
+    // Re-enqueue — messages are still in DB, processGroupMessages will re-fetch
+    state.pendingMessages = true;
+    this.drainGroup(groupJid);
   }
 
   private async runForGroup(

@@ -196,6 +196,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
+  // Start watchdog — will kill container if no activity within timeout
+  queue.startWatchdog(chatJid);
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -220,6 +223,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     chatJid,
     imageAttachments,
     async (result) => {
+      // Reset watchdog on any agent activity
+      queue.resetWatchdog(chatJid);
+
       // Streaming output callback — called for each agent result
       if (result.result) {
         const raw =
@@ -249,6 +255,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
+  queue.clearWatchdog(chatJid);
 
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
@@ -431,6 +438,7 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
+            queue.startWatchdog(chatJid);
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
