@@ -2,7 +2,11 @@ import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, MAX_CONCURRENT_CONTAINERS, WATCHDOG_TIMEOUT } from './config.js';
+import {
+  DATA_DIR,
+  MAX_CONCURRENT_CONTAINERS,
+  WATCHDOG_TIMEOUT,
+} from './config.js';
 import { stopContainer } from './container-runtime.js';
 import { logger } from './logger.js';
 
