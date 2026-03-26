@@ -203,9 +203,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   // Mark all user messages as thinking (container is spawning)
-  const userMessages = missedMessages.filter(
-    (m) => !m.is_from_me && !m.is_bot_message,
-  );
+  const userMessages = missedMessages.filter((m) => !m.is_bot_message);
   for (const msg of userMessages) {
     statusTracker.markThinking(msg.id);
   }
@@ -485,8 +483,12 @@ async function startMessageLoop(): Promise<void> {
 
           // Mark each user message as received (status emoji)
           for (const msg of groupMessages) {
-            if (!msg.is_from_me && !msg.is_bot_message) {
-              statusTracker.markReceived(msg.id, chatJid, msg.is_from_me ?? false);
+            if (!msg.is_bot_message) {
+              statusTracker.markReceived(
+                msg.id,
+                chatJid,
+                msg.is_from_me ?? false,
+              );
             }
           }
 
@@ -510,7 +512,7 @@ async function startMessageLoop(): Promise<void> {
             // Mark new user messages as thinking (only groupMessages were markReceived'd;
             // accumulated allPending context messages are untracked and would no-op)
             for (const msg of groupMessages) {
-              if (!msg.is_from_me && !msg.is_bot_message) {
+              if (!msg.is_bot_message) {
                 statusTracker.markThinking(msg.id);
               }
             }
