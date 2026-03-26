@@ -48,7 +48,11 @@ const oauth2 = new google.auth.OAuth2(
 const authUrl = oauth2.generateAuthUrl({
   access_type: 'offline',
   prompt: 'consent',
-  scope: ['https://www.googleapis.com/auth/gmail.send'],
+  scope: [
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/drive.file',
+  ],
 });
 
 console.log(`\nOpening browser for "${accountName}" OAuth consent...`);

@@ -20,8 +20,19 @@ import {
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
+import { isVoiceMessage, processAudio } from '../audio.js';
 import { isImageMessage, processImage } from '../image.js';
 import { logger } from '../logger.js';
+import { isAudioMime, isDocumentMime } from '../mime.js';
+
+/** Runtime type guard for downloadMediaMessage result when called with 'buffer'. */
+function asBuffer(data: Buffer | import('stream').Transform): Buffer {
+  if (!Buffer.isBuffer(data)) {
+    throw new Error('Expected buffer from downloadMediaMessage');
+  }
+  return data;
+}
+
 import {
   Channel,
   OnInboundMessage,
@@ -203,6 +214,7 @@ export class WhatsAppChannel implements Channel {
               normalized.extendedTextMessage?.text ||
               normalized.imageMessage?.caption ||
               normalized.videoMessage?.caption ||
+              normalized.documentMessage?.caption ||
               '';
 
             // Image attachment handling
@@ -212,7 +224,7 @@ export class WhatsAppChannel implements Channel {
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const caption = normalized?.imageMessage?.caption ?? '';
                 const result = await processImage(
-                  buffer as Buffer,
+                  asBuffer(buffer),
                   groupDir,
                   caption,
                 );
@@ -224,8 +236,67 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
-            // PDF attachment handling
-            if (normalized?.documentMessage?.mimetype === 'application/pdf') {
+            // Voice note handling (WhatsApp push-to-talk)
+            if (isVoiceMessage(msg)) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const result = await processAudio(
+                  asBuffer(buffer),
+                  groupDir,
+                  true,
+                );
+                if (result) {
+                  content = result.content;
+                }
+              } catch (err) {
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Voice note - download failed',
+                );
+              }
+            }
+
+            // Audio document handling (.m4a, .mp3, .wav, etc.)
+            if (
+              normalized?.documentMessage?.mimetype &&
+              isAudioMime(normalized.documentMessage.mimetype)
+            ) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const filename =
+                  normalized.documentMessage.fileName ||
+                  `audio-${Date.now()}.m4a`;
+                const result = await processAudio(
+                  asBuffer(buffer),
+                  groupDir,
+                  false,
+                  filename,
+                );
+                if (result) {
+                  const caption = normalized.documentMessage.caption || '';
+                  content = caption
+                    ? `${caption}\n\n${result.content}`
+                    : result.content;
+                }
+                logger.info(
+                  { jid: chatJid, filename },
+                  'Downloaded audio attachment',
+                );
+              } catch (err) {
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Audio document - download failed',
+                );
+              }
+            }
+
+            // Document attachment handling (PDF, Office docs, etc.)
+            if (
+              normalized?.documentMessage?.mimetype &&
+              isDocumentMime(normalized.documentMessage.mimetype)
+            ) {
               try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {});
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
@@ -233,22 +304,28 @@ export class WhatsAppChannel implements Channel {
                 fs.mkdirSync(attachDir, { recursive: true });
                 const filename = path.basename(
                   normalized.documentMessage.fileName ||
-                    `doc-${Date.now()}.pdf`,
+                    `doc-${Date.now()}`,
                 );
                 const filePath = path.join(attachDir, filename);
-                fs.writeFileSync(filePath, buffer as Buffer);
-                const sizeKB = Math.round((buffer as Buffer).length / 1024);
-                const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
+                fs.writeFileSync(filePath, asBuffer(buffer));
+                const sizeKB = Math.round((asBuffer(buffer)).length / 1024);
+                const isPdf =
+                  normalized.documentMessage.mimetype === 'application/pdf';
+                const label = isPdf ? 'PDF' : 'Document';
+                let docRef = `[${label}: attachments/${filename} (${sizeKB}KB)]`;
+                if (isPdf) {
+                  docRef += `\nUse: pdf-reader extract attachments/${filename}`;
+                }
                 const caption = normalized.documentMessage.caption || '';
-                content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+                content = caption ? `${caption}\n\n${docRef}` : docRef;
                 logger.info(
                   { jid: chatJid, filename },
-                  'Downloaded PDF attachment',
+                  'Downloaded document attachment',
                 );
               } catch (err) {
                 logger.warn(
                   { err, jid: chatJid },
-                  'Failed to download PDF attachment',
+                  'Failed to download document attachment',
                 );
               }
             }

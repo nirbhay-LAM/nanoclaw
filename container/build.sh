@@ -10,6 +10,10 @@ IMAGE_NAME="nanoclaw-agent"
 TAG="${1:-latest}"
 CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-container}"
 
+# Pre-compile email MCP on host (googleapis types OOM inside container builder)
+echo "Pre-compiling email MCP..."
+(cd "$SCRIPT_DIR/email-mcp" && npm install --silent && npm run build --silent)
+
 echo "Building NanoClaw agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
 

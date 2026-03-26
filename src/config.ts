@@ -62,6 +62,13 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
 
+// Audio transcription (host-side whisper.cpp)
+export const WHISPER_BIN =
+  process.env.WHISPER_BIN || '/opt/homebrew/bin/whisper-cli';
+export const WHISPER_MODEL =
+  process.env.WHISPER_MODEL ||
+  path.resolve(PROJECT_ROOT, 'data/models/ggml-base.en.bin');
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

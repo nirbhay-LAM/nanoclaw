@@ -36,13 +36,12 @@ RUN npm install -g agent-browser @anthropic-ai/claude-code docx pptxgenjs excelj
 # Make globally installed packages resolvable from any working directory
 ENV NODE_PATH=/usr/local/lib/node_modules
 
-# Build email MCP server (pre-compiled, not per-group customizable)
-# Separated from agent-runner to avoid compiling googleapis types at runtime
+# Email MCP server — pre-compiled on host to avoid OOM from googleapis types.
+# Run: cd container/email-mcp && npm install && npm run build  before container build.
 WORKDIR /app/email-mcp
 COPY email-mcp/package*.json ./
-RUN npm install
-COPY email-mcp/ ./
-RUN npm run build
+RUN npm install --omit=dev
+COPY email-mcp/dist/ ./dist/
 
 # Build agent-runner (lightweight — no googleapis)
 WORKDIR /app

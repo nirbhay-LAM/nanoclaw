@@ -43,8 +43,22 @@ export const PROXY_BIND_HOST =
 
 function detectProxyBindHost(): string {
   if (os.platform() === 'darwin') {
-    // Apple Container VMs can't reach 127.0.0.1 — bind to the bridge IP
-    if (CONTAINER_RUNTIME_BIN === 'container') return CONTAINER_HOST_GATEWAY;
+    // Apple Container VMs can't reach 127.0.0.1 — bind to the bridge IP.
+    // The bridge only exists while a container is running, so fall back to
+    // 0.0.0.0 at startup; once a container launches the bridge appears and
+    // traffic reaches us via the gateway IP regardless of bind address.
+    if (CONTAINER_RUNTIME_BIN === 'container') {
+      try {
+        const br = execSync(
+          "ifconfig bridge100 2>/dev/null | awk '/inet / {print $2}'",
+          { encoding: 'utf-8' },
+        ).trim();
+        if (br) return br;
+      } catch {
+        // bridge not up yet
+      }
+      return '0.0.0.0';
+    }
     // Docker Desktop routes host.docker.internal to loopback
     return '127.0.0.1';
   }

@@ -31,12 +31,19 @@ vi.mock('../db.js', () => ({
 // Mock image module
 vi.mock('../image.js', () => ({
   isImageMessage: vi.fn().mockReturnValue(false),
-  processImage: vi
-    .fn()
-    .mockResolvedValue({
-      content: '[Image: attachments/test.jpg]',
-      relativePath: 'attachments/test.jpg',
-    }),
+  processImage: vi.fn().mockResolvedValue({
+    content: '[Image: attachments/test.jpg]',
+    relativePath: 'attachments/test.jpg',
+  }),
+}));
+
+// Mock audio module
+vi.mock('../audio.js', () => ({
+  isVoiceMessage: vi.fn().mockReturnValue(false),
+  processAudio: vi.fn().mockResolvedValue({
+    content: '[Voice Note: hello world]',
+    relativePath: 'attachments/voice-test.ogg',
+  }),
 }));
 
 // Mock fs
@@ -48,6 +55,7 @@ vi.mock('fs', async () => {
       ...actual,
       existsSync: vi.fn(() => true),
       mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
     },
   };
 });
@@ -117,6 +125,7 @@ import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
 import { isImageMessage, processImage } from '../image.js';
+import { isVoiceMessage, processAudio } from '../audio.js';
 
 // --- Test helpers ---
 
@@ -549,7 +558,8 @@ describe('WhatsAppChannel', () => {
       );
     });
 
-    it('handles message with no extractable text (e.g. voice note without caption)', async () => {
+    it('transcribes voice notes via processAudio', async () => {
+      vi.mocked(isVoiceMessage).mockReturnValue(true);
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
 
@@ -571,8 +581,16 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Skipped — no text content to process
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      expect(downloadMediaMessage).toHaveBeenCalled();
+      expect(processAudio).toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: '[Voice Note: hello world]',
+        }),
+      );
+
+      vi.mocked(isVoiceMessage).mockReturnValue(false);
     });
 
     it('uses sender JID when pushName is absent', async () => {
@@ -755,6 +773,330 @@ describe('WhatsAppChannel', () => {
       );
 
       vi.mocked(isImageMessage).mockReturnValue(false);
+    });
+  });
+
+  // --- Document attachment handling ---
+
+  describe('document attachment handling', () => {
+    it('downloads and saves a .docx attachment', async () => {
+      const docBuffer = Buffer.from('fake-docx-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(docBuffer);
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-doc-1',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype:
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              fileName: 'report.docx',
+              caption: '',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(downloadMediaMessage).toHaveBeenCalled();
+      const fs = (await import('fs')).default;
+      expect(fs.mkdirSync).toHaveBeenCalled();
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('report.docx'),
+        docBuffer,
+      );
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('[Document: attachments/report.docx'),
+        }),
+      );
+    });
+
+    it('downloads and saves a .xlsx attachment', async () => {
+      const xlsBuffer = Buffer.from('fake-xlsx-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(xlsBuffer);
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-doc-2',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype:
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              fileName: 'data.xlsx',
+              caption: '',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(downloadMediaMessage).toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('[Document: attachments/data.xlsx'),
+        }),
+      );
+    });
+
+    it('includes caption with document reference', async () => {
+      const docBuffer = Buffer.from('fake-docx-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(docBuffer);
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-doc-3',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype:
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              fileName: 'proposal.docx',
+              caption: 'Please review this',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringMatching(
+            /Please review this\n\n\[Document: attachments\/proposal\.docx/,
+          ),
+        }),
+      );
+    });
+
+    it('PDFs still get pdf-reader hint', async () => {
+      const pdfBuffer = Buffer.from('fake-pdf-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(pdfBuffer);
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-doc-4',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype: 'application/pdf',
+              fileName: 'invoice.pdf',
+              caption: '',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('pdf-reader extract'),
+        }),
+      );
+    });
+
+    it('non-PDF documents do not get pdf-reader hint', async () => {
+      const docBuffer = Buffer.from('fake-pptx-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(docBuffer);
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-doc-5',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype:
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+              fileName: 'slides.pptx',
+              caption: '',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.not.stringContaining('pdf-reader'),
+        }),
+      );
+    });
+
+    it('handles document download failure gracefully', async () => {
+      vi.mocked(downloadMediaMessage).mockRejectedValueOnce(
+        new Error('Download failed'),
+      );
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-doc-6',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype:
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              fileName: 'fail.docx',
+              caption: 'Attached file',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      // Download failed but caption is still delivered
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: 'Attached file',
+        }),
+      );
+    });
+  });
+
+  // --- Audio document handling ---
+
+  describe('audio document handling', () => {
+    it('transcribes audio documents via processAudio', async () => {
+      const audioBuffer = Buffer.from('fake-m4a-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(audioBuffer);
+      vi.mocked(processAudio).mockResolvedValueOnce({
+        content: '[Audio: attachments/memo.m4a (50KB)]\nTranscript: Team standup notes',
+        relativePath: 'attachments/memo.m4a',
+      });
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-audio-1',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype: 'audio/mp4',
+              fileName: 'memo.m4a',
+              caption: '',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(downloadMediaMessage).toHaveBeenCalled();
+      expect(processAudio).toHaveBeenCalled();
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('[Audio: attachments/memo.m4a'),
+        }),
+      );
+    });
+
+    it('includes caption with audio transcript', async () => {
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(
+        Buffer.from('audio-data'),
+      );
+      vi.mocked(processAudio).mockResolvedValueOnce({
+        content: '[Audio: attachments/call.mp3 (200KB)]\nTranscript: Hello everyone',
+        relativePath: 'attachments/call.mp3',
+      });
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-audio-2',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype: 'audio/mpeg',
+              fileName: 'call.mp3',
+              caption: 'From yesterday',
+            },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringMatching(/From yesterday\n\n\[Audio:/),
+        }),
+      );
     });
   });
 
