@@ -88,7 +88,20 @@ async function transcribe(audioPath: string): Promise<string | null> {
     // Convert to 16kHz mono WAV
     await execFile(
       'ffmpeg',
-      ['-i', audioPath, '-ar', '16000', '-ac', '1', '-f', 'wav', tmpWav, '-y', '-loglevel', 'error'],
+      [
+        '-i',
+        audioPath,
+        '-ar',
+        '16000',
+        '-ac',
+        '1',
+        '-f',
+        'wav',
+        tmpWav,
+        '-y',
+        '-loglevel',
+        'error',
+      ],
       { timeout: FFMPEG_TIMEOUT },
     );
 

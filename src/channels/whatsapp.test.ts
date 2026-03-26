@@ -818,7 +818,9 @@ describe('WhatsAppChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
         expect.objectContaining({
-          content: expect.stringContaining('[Document: attachments/report.docx'),
+          content: expect.stringContaining(
+            '[Document: attachments/report.docx',
+          ),
         }),
       );
     });
@@ -1020,7 +1022,8 @@ describe('WhatsAppChannel', () => {
       const audioBuffer = Buffer.from('fake-m4a-data');
       vi.mocked(downloadMediaMessage).mockResolvedValueOnce(audioBuffer);
       vi.mocked(processAudio).mockResolvedValueOnce({
-        content: '[Audio: attachments/memo.m4a (50KB)]\nTranscript: Team standup notes',
+        content:
+          '[Audio: attachments/memo.m4a (50KB)]\nTranscript: Team standup notes',
         relativePath: 'attachments/memo.m4a',
       });
       const opts = createTestOpts();
@@ -1063,7 +1066,8 @@ describe('WhatsAppChannel', () => {
         Buffer.from('audio-data'),
       );
       vi.mocked(processAudio).mockResolvedValueOnce({
-        content: '[Audio: attachments/call.mp3 (200KB)]\nTranscript: Hello everyone',
+        content:
+          '[Audio: attachments/call.mp3 (200KB)]\nTranscript: Hello everyone',
         relativePath: 'attachments/call.mp3',
       });
       const opts = createTestOpts();

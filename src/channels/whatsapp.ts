@@ -303,12 +303,11 @@ export class WhatsAppChannel implements Channel {
                 const attachDir = path.join(groupDir, 'attachments');
                 fs.mkdirSync(attachDir, { recursive: true });
                 const filename = path.basename(
-                  normalized.documentMessage.fileName ||
-                    `doc-${Date.now()}`,
+                  normalized.documentMessage.fileName || `doc-${Date.now()}`,
                 );
                 const filePath = path.join(attachDir, filename);
                 fs.writeFileSync(filePath, asBuffer(buffer));
-                const sizeKB = Math.round((asBuffer(buffer)).length / 1024);
+                const sizeKB = Math.round(asBuffer(buffer).length / 1024);
                 const isPdf =
                   normalized.documentMessage.mimetype === 'application/pdf';
                 const label = isPdf ? 'PDF' : 'Document';

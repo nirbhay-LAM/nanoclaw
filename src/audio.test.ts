@@ -20,31 +20,28 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import {
-  isVoiceMessage,
-  processAudio,
-  parseAudioReferences,
-} from './audio.js';
+import { isVoiceMessage, processAudio, parseAudioReferences } from './audio.js';
 
 // Helper to mock execFile as a callback-based function
-function mockExecFile(
-  ...results: Array<{ stdout?: string; error?: Error }>
-) {
+function mockExecFile(...results: Array<{ stdout?: string; error?: Error }>) {
   const mock = vi.mocked(execFile);
   for (const result of results) {
-    mock.mockImplementationOnce(
-      ((_cmd: string, _args: unknown, _opts: unknown, cb: unknown) => {
-        const callback = cb as (
-          err: Error | null,
-          result: { stdout: string; stderr: string },
-        ) => void;
-        if (result.error) {
-          callback(result.error, { stdout: '', stderr: '' });
-        } else {
-          callback(null, { stdout: result.stdout || '', stderr: '' });
-        }
-      }) as typeof execFile,
-    );
+    mock.mockImplementationOnce(((
+      _cmd: string,
+      _args: unknown,
+      _opts: unknown,
+      cb: unknown,
+    ) => {
+      const callback = cb as (
+        err: Error | null,
+        result: { stdout: string; stderr: string },
+      ) => void;
+      if (result.error) {
+        callback(result.error, { stdout: '', stderr: '' });
+      } else {
+        callback(null, { stdout: result.stdout || '', stderr: '' });
+      }
+    }) as typeof execFile);
   }
 }
 
@@ -90,10 +87,10 @@ describe('audio processing', () => {
       const result = await processAudio(buffer, '/tmp/groups/test', true);
 
       expect(result).not.toBeNull();
-      expect(result!.content).toBe(
-        '[Voice Note: Hello, this is a test.]',
+      expect(result!.content).toBe('[Voice Note: Hello, this is a test.]');
+      expect(result!.relativePath).toMatch(
+        /^attachments\/voice-\d+-[a-z0-9]+\.ogg$/,
       );
-      expect(result!.relativePath).toMatch(/^attachments\/voice-\d+-[a-z0-9]+\.ogg$/);
       expect(fs.mkdirSync).toHaveBeenCalled();
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('voice-'),
@@ -168,16 +165,9 @@ describe('audio processing', () => {
     });
 
     it('cleans up temp WAV file', async () => {
-      mockExecFile(
-        { stdout: '' },
-        { stdout: 'some text' },
-      );
+      mockExecFile({ stdout: '' }, { stdout: 'some text' });
 
-      await processAudio(
-        Buffer.from('data'),
-        '/tmp/groups/test',
-        true,
-      );
+      await processAudio(Buffer.from('data'), '/tmp/groups/test', true);
 
       // unlinkSync called to clean up temp WAV
       expect(fs.unlinkSync).toHaveBeenCalledWith(
@@ -189,7 +179,10 @@ describe('audio processing', () => {
   describe('parseAudioReferences', () => {
     it('extracts audio paths from content', () => {
       const messages = [
-        { content: '[Audio: attachments/meeting.m4a (150KB)]\nTranscript: hello' },
+        {
+          content:
+            '[Audio: attachments/meeting.m4a (150KB)]\nTranscript: hello',
+        },
         { content: 'plain text' },
         { content: '[Audio: attachments/voice-123.ogg (50KB)]' },
       ];
