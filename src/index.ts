@@ -492,25 +492,18 @@ async function startMessageLoop(): Promise<void> {
             }
           }
 
-          // Pull all messages since lastAgentTimestamp so non-trigger
-          // context that accumulated between triggers is included.
-          const allPending = getMessagesSince(
-            chatJid,
-            lastAgentTimestamp[chatJid] || '',
-            ASSISTANT_NAME,
-          );
-          const messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend, TIMEZONE);
+          // Pipe only new messages to active containers — they already have
+          // prior context from their initial prompt. Full context accumulation
+          // is handled by processGroupMessages when spawning new containers.
+          const formatted = formatMessages(groupMessages, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
             queue.startWatchdog(chatJid);
             logger.debug(
-              { chatJid, count: messagesToSend.length },
+              { chatJid, count: groupMessages.length },
               'Piped messages to active container',
             );
-            // Mark new user messages as thinking (only groupMessages were markReceived'd;
-            // accumulated allPending context messages are untracked and would no-op)
+            // Mark new user messages as thinking
             for (const msg of groupMessages) {
               if (!msg.is_bot_message) {
                 statusTracker.markThinking(msg.id);
@@ -521,7 +514,7 @@ async function startMessageLoop(): Promise<void> {
               cursorBeforePipe[chatJid] = lastAgentTimestamp[chatJid] || '';
             }
             lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
+              groupMessages[groupMessages.length - 1].timestamp;
             saveState();
             // Show typing indicator while the container processes the piped message
             channel

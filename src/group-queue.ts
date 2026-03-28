@@ -157,6 +157,11 @@ export class GroupQueue {
   notifyIdle(groupJid: string): void {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
+    // Watchdog is for stuck containers during processing. Once the agent
+    // reports success and goes idle, it's not stuck — clear the watchdog.
+    // The idle timer (IDLE_TIMEOUT) handles graceful shutdown instead.
+    // Watchdog is re-armed when a new message is piped via startWatchdog().
+    this.clearWatchdog(groupJid);
     if (state.pendingTasks.length > 0) {
       this.closeStdin(groupJid);
     }
