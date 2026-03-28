@@ -73,6 +73,28 @@ describe('audio processing', () => {
       const msg = { message: null };
       expect(isVoiceMessage(msg as WAMessage)).toBe(false);
     });
+
+    it('returns true for viewOnce wrapped voice notes', () => {
+      const msg = {
+        message: {
+          viewOnceMessageV2: {
+            message: { audioMessage: { ptt: true } },
+          },
+        },
+      };
+      expect(isVoiceMessage(msg as WAMessage)).toBe(true);
+    });
+
+    it('returns true for ephemeral wrapped voice notes', () => {
+      const msg = {
+        message: {
+          ephemeralMessage: {
+            message: { audioMessage: { ptt: true } },
+          },
+        },
+      };
+      expect(isVoiceMessage(msg as WAMessage)).toBe(true);
+    });
   });
 
   describe('processAudio', () => {

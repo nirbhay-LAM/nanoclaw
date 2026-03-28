@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
+import { normalizeMessageContent } from '@whiskeysockets/baileys';
 import type { WAMessage } from '@whiskeysockets/baileys';
 
 import { WHISPER_BIN, WHISPER_MODEL } from './config.js';
@@ -30,7 +31,8 @@ export interface AudioAttachment {
 
 /** True for WhatsApp push-to-talk voice notes. */
 export function isVoiceMessage(msg: WAMessage): boolean {
-  return msg.message?.audioMessage?.ptt === true;
+  const content = normalizeMessageContent(msg.message);
+  return content?.audioMessage?.ptt === true;
 }
 
 /**

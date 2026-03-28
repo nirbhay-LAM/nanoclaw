@@ -37,6 +37,28 @@ describe('image processing', () => {
       const msg = { message: null };
       expect(isImageMessage(msg as any)).toBe(false);
     });
+
+    it('returns true for viewOnce wrapped image messages', () => {
+      const msg = {
+        message: {
+          viewOnceMessageV2: {
+            message: { imageMessage: { mimetype: 'image/jpeg' } },
+          },
+        },
+      };
+      expect(isImageMessage(msg as any)).toBe(true);
+    });
+
+    it('returns true for ephemeral wrapped image messages', () => {
+      const msg = {
+        message: {
+          ephemeralMessage: {
+            message: { imageMessage: { mimetype: 'image/png' } },
+          },
+        },
+      };
+      expect(isImageMessage(msg as any)).toBe(true);
+    });
   });
 
   describe('processImage', () => {

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
+import { normalizeMessageContent } from '@whiskeysockets/baileys';
 import type { WAMessage } from '@whiskeysockets/baileys';
 
 const MAX_DIMENSION = 1024;
@@ -17,7 +18,8 @@ export interface ImageAttachment {
 }
 
 export function isImageMessage(msg: WAMessage): boolean {
-  return !!msg.message?.imageMessage;
+  const content = normalizeMessageContent(msg.message);
+  return !!content?.imageMessage;
 }
 
 export async function processImage(
