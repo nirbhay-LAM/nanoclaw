@@ -248,11 +248,12 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   isMain: boolean,
+  memoryMb: number = 2048,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Container memory — 1GB baseline (email-mcp pre-compiled, runtime TSC is lightweight)
-  args.push('--memory', '1024MB');
+  // Container memory — configurable, default 2GB for Opus with extended thinking
+  args.push('--memory', `${memoryMb}MB`);
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -321,7 +322,8 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
+  const memoryMb = group.containerConfig?.memory || 2048;
+  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain, memoryMb);
 
   logger.debug(
     {

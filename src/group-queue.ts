@@ -257,10 +257,12 @@ export class GroupQueue {
         containerName: state.containerName,
         idleSeconds: idleSec,
       },
-      'Watchdog: container unresponsive, killing and re-queuing',
+      'Watchdog: killing stuck container',
     );
 
-    // Kill the stuck container process
+    // Kill the stuck container process — the close event will trigger
+    // the normal cleanup in runForGroup's finally block. Do NOT reset
+    // active/activeCount here to avoid double-decrement.
     if (state.process && !state.process.killed) {
       state.process.kill('SIGKILL');
     }
@@ -273,17 +275,9 @@ export class GroupQueue {
       }
     }
 
-    // Reset state so drainGroup can spawn a new container
-    state.active = false;
-    state.idleWaiting = false;
-    state.process = null;
-    state.containerName = null;
+    // Clear watchdog timer, signal re-queue for after normal cleanup
     state.watchdogTimer = null;
-    this.activeCount--;
-
-    // Re-enqueue — messages are still in DB, processGroupMessages will re-fetch
     state.pendingMessages = true;
-    this.drainGroup(groupJid);
   }
 
   private async runForGroup(

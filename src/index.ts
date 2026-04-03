@@ -74,6 +74,10 @@ let lastAgentTimestamp: Record<string, string> = {};
 // Tracks cursor value before messages were piped to an active container.
 // Used to roll back if the container dies after piping.
 let cursorBeforePipe: Record<string, string> = {};
+// Tracks messages sent to user during a container session.
+// If the container crashes, these are prepended to the retry prompt
+// so the new container knows what was already communicated.
+let crashRecoveryContext: Record<string, string[]> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -208,8 +212,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     statusTracker.markThinking(msg.id);
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  let prompt = formatMessages(missedMessages, TIMEZONE);
   const imageAttachments = parseImageReferences(missedMessages);
+
+  // If a previous container crashed after sending output, prepend the
+  // recovery context so the retry container doesn't contradict itself.
+  if (crashRecoveryContext[chatJid]?.length) {
+    const prior = crashRecoveryContext[chatJid];
+    const recoveryNote = [
+      '[SYSTEM: Your previous session crashed after sending these responses to the user. Do not repeat or contradict this information. Continue naturally from where you left off.]',
+      ...prior.map((t, i) => `Previous response ${i + 1}: ${t}`),
+      '[END SYSTEM NOTE]',
+    ].join('\n');
+    prompt = recoveryNote + '\n\n' + prompt;
+    delete crashRecoveryContext[chatJid];
+  }
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -275,6 +292,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (text) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
+          // Track for crash recovery — if container dies, retry knows what was sent
+          if (!crashRecoveryContext[chatJid]) crashRecoveryContext[chatJid] = [];
+          crashRecoveryContext[chatJid].push(text);
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
@@ -296,6 +316,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   queue.clearWatchdog(chatJid);
 
   if (output === 'error' || hadError) {
+    // Always clear the session on crash so retries start fresh.
+    // A crashed session may have partial/corrupted context that would
+    // cause contradictory responses if resumed.
+    delete sessions[group.folder];
+    deleteSession(group.folder);
+
     if (outputSentToUser) {
       // Output was sent for the initial batch, so don't roll those back.
       // But if messages were piped AFTER that output, roll back to recover them.
@@ -329,8 +355,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return false;
   }
 
-  // Success — clear pipe tracking (markAllDone already fired in streaming callback)
+  // Success — clear pipe tracking and recovery context
   delete cursorBeforePipe[chatJid];
+  delete crashRecoveryContext[chatJid];
   saveState();
   return true;
 }
