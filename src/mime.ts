@@ -21,6 +21,12 @@ const MIME_MAP: Record<string, string> = {
   '.aac': 'audio/aac',
   '.ogg': 'audio/ogg',
   '.opus': 'audio/opus',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.3gp': 'video/3gpp',
 };
 
 /** Returns the MIME type for a filename based on its extension. */
@@ -59,4 +65,20 @@ export const AUDIO_MIME_TYPES = new Set([
 /** Check if a MIME type is a recognized audio type. */
 export function isAudioMime(mime: string): boolean {
   return AUDIO_MIME_TYPES.has(mime);
+}
+
+/** MIME types recognized as video. */
+export const VIDEO_MIME_TYPES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+  'video/x-matroska',
+  'video/3gpp',
+  'video/x-ms-wmv',
+]);
+
+/** Check if a MIME type is a recognized video type. */
+export function isVideoMime(mime: string): boolean {
+  return VIDEO_MIME_TYPES.has(mime);
 }

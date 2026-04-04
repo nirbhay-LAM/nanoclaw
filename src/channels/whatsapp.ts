@@ -28,6 +28,7 @@ import {
 } from '../db.js';
 import { isVoiceMessage, processAudio } from '../audio.js';
 import { isImageMessage, processImage } from '../image.js';
+import { isVideoMessage, processVideo } from '../video.js';
 import { logger } from '../logger.js';
 import { isAudioMime, isDocumentMime } from '../mime.js';
 
@@ -239,6 +240,28 @@ export class WhatsAppChannel implements Channel {
                 }
               } catch (err) {
                 logger.warn({ err, jid: chatJid }, 'Image - download failed');
+              }
+            }
+
+            // Video handling
+            if (isVideoMessage(msg)) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const caption = normalized?.videoMessage?.caption ?? '';
+                const result = await processVideo(
+                  asBuffer(buffer),
+                  groupDir,
+                  caption,
+                );
+                if (result) {
+                  content = result.content;
+                }
+              } catch (err) {
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Video - download failed',
+                );
               }
             }
 

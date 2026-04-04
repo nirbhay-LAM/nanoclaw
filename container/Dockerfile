@@ -6,6 +6,7 @@ FROM node:22-slim
 # Install system dependencies for Chromium and PDF tools
 RUN apt-get update && apt-get install -y \
     chromium \
+    ffmpeg \
     fonts-liberation \
     fonts-noto-color-emoji \
     libgbm1 \
@@ -42,6 +43,12 @@ WORKDIR /app/email-mcp
 COPY email-mcp/package*.json ./
 RUN npm install --omit=dev
 COPY email-mcp/dist/ ./dist/
+
+# GBP MCP server — pre-compiled on host (same pattern as email-mcp).
+WORKDIR /app/gbp-mcp
+COPY gbp-mcp/package*.json ./
+RUN npm install --omit=dev
+COPY gbp-mcp/dist/ ./dist/
 
 # Build agent-runner (lightweight — no googleapis)
 WORKDIR /app

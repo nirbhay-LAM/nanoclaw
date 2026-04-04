@@ -49,6 +49,17 @@ vi.mock('../audio.js', () => ({
   }),
 }));
 
+// Mock video module
+vi.mock('../video.js', () => ({
+  isVideoMessage: vi.fn().mockReturnValue(false),
+  processVideo: vi.fn().mockResolvedValue({
+    content: '[Video: attachments/test.mp4 (10s, 500KB, 5 frames)]',
+    relativePath: 'attachments/test.mp4',
+    frameCount: 5,
+    duration: 10,
+  }),
+}));
+
 // Mock fs
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -66,6 +77,7 @@ vi.mock('fs', async () => {
 // Mock child_process (used for osascript notification)
 vi.mock('child_process', () => ({
   exec: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 // Build a fake WASocket that's an EventEmitter with the methods we need

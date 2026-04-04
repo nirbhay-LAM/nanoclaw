@@ -61,6 +61,7 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { parseImageReferences } from './image.js';
+import { parseVideoReferences } from './video.js';
 import { StatusTracker } from './status-tracker.js';
 import { logger } from './logger.js';
 
@@ -214,6 +215,32 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   let prompt = formatMessages(missedMessages, TIMEZONE);
   const imageAttachments = parseImageReferences(missedMessages);
+  const videoRefs = parseVideoReferences(missedMessages);
+
+  // Add video frames as image attachments so the agent can see them
+  for (const vRef of videoRefs) {
+    const baseName = path.basename(
+      vRef.relativePath,
+      path.extname(vRef.relativePath),
+    );
+    const frameDir = path.join(
+      resolveGroupFolderPath(group.folder),
+      'attachments',
+      baseName,
+    );
+    if (fs.existsSync(frameDir)) {
+      const frames = fs
+        .readdirSync(frameDir)
+        .filter((f: string) => f.startsWith('frame_') && f.endsWith('.jpg'))
+        .sort();
+      for (const frame of frames) {
+        imageAttachments.push({
+          relativePath: `attachments/${baseName}/${frame}`,
+          mediaType: 'image/jpeg',
+        });
+      }
+    }
+  }
 
   // If a previous container crashed after sending output, prepend the
   // recovery context so the retry container doesn't contradict itself.
@@ -293,7 +320,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
           // Track for crash recovery — if container dies, retry knows what was sent
-          if (!crashRecoveryContext[chatJid]) crashRecoveryContext[chatJid] = [];
+          if (!crashRecoveryContext[chatJid])
+            crashRecoveryContext[chatJid] = [];
           crashRecoveryContext[chatJid].push(text);
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
