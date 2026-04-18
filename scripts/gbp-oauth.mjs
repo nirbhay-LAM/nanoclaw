@@ -1,7 +1,7 @@
 /**
- * Gmail OAuth helper — opens browser for consent, saves refresh token.
- * Usage: node scripts/gmail-oauth.mjs <account-name>
- *   account-name: directory name under ~/.gmail-mcp/ (e.g., "personal", "lam")
+ * GBP OAuth helper — extends existing Gmail OAuth with business.manage scope.
+ * Reuses the same GCP project keys from ~/.gmail-mcp/lam/.
+ * Usage: node scripts/gbp-oauth.mjs
  */
 import fs from 'fs';
 import path from 'path';
@@ -9,20 +9,14 @@ import http from 'http';
 import { google } from 'googleapis';
 import open from 'open';
 
-const accountName = process.argv[2];
-if (!accountName) {
-  console.error('Usage: node scripts/gmail-oauth.mjs <account-name>');
-  console.error('  e.g., node scripts/gmail-oauth.mjs personal');
-  process.exit(1);
-}
-
+const accountName = 'lam';
 const credDir = path.join(process.env.HOME, '.gmail-mcp', accountName);
 const keysPath = path.join(credDir, 'gcp-oauth.keys.json');
 const credsPath = path.join(credDir, 'credentials.json');
 
 if (!fs.existsSync(keysPath)) {
   console.error(`No OAuth keys found at ${keysPath}`);
-  console.error('Download the JSON from GCP Console first.');
+  console.error('Expected existing GCP OAuth keys from email setup.');
   process.exit(1);
 }
 
@@ -33,7 +27,6 @@ if (!installed) {
   process.exit(1);
 }
 
-// Start server first to get the actual port, then build the redirect URI
 const server = http.createServer();
 await new Promise((resolve) => server.listen(0, resolve));
 const port = server.address().port;
@@ -45,6 +38,7 @@ const oauth2 = new google.auth.OAuth2(
   redirectUri,
 );
 
+// All scopes: existing email/drive + new business.manage
 const authUrl = oauth2.generateAuthUrl({
   access_type: 'offline',
   prompt: 'consent',
@@ -52,10 +46,12 @@ const authUrl = oauth2.generateAuthUrl({
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/business.manage',
   ],
 });
 
-console.log(`\nOpening browser for "${accountName}" OAuth consent...`);
+console.log(`\nOpening browser for GBP OAuth consent (${accountName} account)...`);
+console.log(`This will re-authorize with all existing scopes plus business.manage.`);
 console.log(`Listening on ${redirectUri}\n`);
 
 server.on('request', async (req, res) => {
@@ -71,11 +67,12 @@ server.on('request', async (req, res) => {
   try {
     const { tokens } = await oauth2.getToken(code);
     fs.writeFileSync(credsPath, JSON.stringify(tokens, null, 2));
-    console.log(`✓ Credentials saved to ${credsPath}`);
+    console.log(`\nCredentials saved to ${credsPath}`);
     console.log(`  Refresh token: ${tokens.refresh_token ? 'present' : 'MISSING'}`);
+    console.log(`  Scopes: ${tokens.scope || 'not reported'}`);
 
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end('<h1>Authenticated!</h1><p>You can close this tab.</p>');
+    res.end('<h1>GBP Authenticated!</h1><p>business.manage scope added. You can close this tab.</p>');
   } catch (err) {
     console.error('Failed to exchange code for tokens:', err.message);
     res.writeHead(500);
@@ -88,7 +85,6 @@ server.on('request', async (req, res) => {
 
 open(authUrl);
 
-// Timeout after 5 minutes
 setTimeout(() => {
   console.error('\nTimeout — no OAuth callback received after 5 minutes.');
   server.close();

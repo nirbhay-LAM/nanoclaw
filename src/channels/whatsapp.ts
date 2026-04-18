@@ -258,10 +258,7 @@ export class WhatsAppChannel implements Channel {
                   content = result.content;
                 }
               } catch (err) {
-                logger.warn(
-                  { err, jid: chatJid },
-                  'Video - download failed',
-                );
+                logger.warn({ err, jid: chatJid }, 'Video - download failed');
               }
             }
 

@@ -5,6 +5,7 @@ import {
   createTask,
   deleteTask,
   getAllChats,
+  getConversationMessages,
   getLatestMessage,
   getMessageFromMe,
   getMessagesByReaction,
@@ -229,6 +230,115 @@ describe('getMessagesSince', () => {
       'Andy',
     );
     expect(msgs).toHaveLength(0);
+  });
+});
+
+// --- getConversationMessages ---
+
+describe('getConversationMessages', () => {
+  beforeEach(() => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    store({
+      id: 'cm1',
+      chat_jid: 'group@g.us',
+      sender: 'Alice@s.whatsapp.net',
+      sender_name: 'Alice',
+      content: 'user message',
+      timestamp: '2024-01-01T00:00:01.000Z',
+    });
+    store({
+      id: 'cm2',
+      chat_jid: 'group@g.us',
+      sender: 'me@s.whatsapp.net',
+      sender_name: 'RSK',
+      content: 'bot reply',
+      timestamp: '2024-01-01T00:00:02.000Z',
+      is_from_me: true,
+    });
+    storeMessage({
+      id: 'cm3',
+      chat_jid: 'group@g.us',
+      sender: 'Bot@s.whatsapp.net',
+      sender_name: 'Bot',
+      content: 'flagged bot message',
+      timestamp: '2024-01-01T00:00:03.000Z',
+      is_bot_message: true,
+    });
+    store({
+      id: 'cm4',
+      chat_jid: 'group@g.us',
+      sender: 'Bob@s.whatsapp.net',
+      sender_name: 'Bob',
+      content: 'another user',
+      timestamp: '2024-01-01T00:00:04.000Z',
+    });
+  });
+
+  it('returns ALL messages including bot and is_from_me', () => {
+    const msgs = getConversationMessages(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+    );
+    // All 4 messages — unlike getMessagesSince, bot messages are included
+    expect(msgs).toHaveLength(4);
+    expect(msgs.map((m) => m.id)).toEqual(['cm1', 'cm2', 'cm3', 'cm4']);
+  });
+
+  it('filters by timestamp', () => {
+    const msgs = getConversationMessages(
+      'group@g.us',
+      '2024-01-01T00:00:02.000Z',
+    );
+    // Only messages after :02 — cm3 and cm4
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].id).toBe('cm3');
+    expect(msgs[1].id).toBe('cm4');
+  });
+
+  it('excludes empty content', () => {
+    store({
+      id: 'cm5',
+      chat_jid: 'group@g.us',
+      sender: 'x@s.whatsapp.net',
+      sender_name: 'X',
+      content: '',
+      timestamp: '2024-01-01T00:00:05.000Z',
+    });
+
+    const msgs = getConversationMessages(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+    );
+    expect(msgs).toHaveLength(4); // cm5 excluded due to empty content
+  });
+
+  it('returns messages ordered by timestamp ascending', () => {
+    const msgs = getConversationMessages(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+    );
+    const timestamps = msgs.map((m) => m.timestamp);
+    expect(timestamps).toEqual([...timestamps].sort());
+  });
+
+  it('returns empty array for unknown chat', () => {
+    const msgs = getConversationMessages(
+      'unknown@g.us',
+      '2024-01-01T00:00:00.000Z',
+    );
+    expect(msgs).toHaveLength(0);
+  });
+
+  it('preserves is_from_me flag in results', () => {
+    const msgs = getConversationMessages(
+      'group@g.us',
+      '2024-01-01T00:00:00.000Z',
+    );
+    const botReply = msgs.find((m) => m.id === 'cm2');
+    expect(botReply!.is_from_me).toBeTruthy();
+    const userMsg = msgs.find((m) => m.id === 'cm1');
+    expect(userMsg!.is_from_me).toBeFalsy();
   });
 });
 

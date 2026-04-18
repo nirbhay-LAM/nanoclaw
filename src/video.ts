@@ -7,6 +7,8 @@ import { promisify } from 'util';
 import { normalizeMessageContent } from '@whiskeysockets/baileys';
 import type { WAMessage } from '@whiskeysockets/baileys';
 
+import { transcribe } from './audio.js';
+import { WHISPER_BIN } from './config.js';
 import { logger } from './logger.js';
 
 const execFile = promisify(execFileCb);
@@ -24,6 +26,7 @@ export interface ProcessedVideo {
   relativePath: string;
   frameCount: number;
   duration: number;
+  transcript: string | null;
 }
 
 export interface VideoAttachment {
@@ -114,9 +117,7 @@ export async function processVideo(
     try {
       // Adjust FPS if we'd exceed MAX_FRAMES
       const effectiveFps =
-        Math.ceil(duration * fps) > MAX_FRAMES
-          ? MAX_FRAMES / duration
-          : fps;
+        Math.ceil(duration * fps) > MAX_FRAMES ? MAX_FRAMES / duration : fps;
 
       await execFile(
         'ffmpeg',
@@ -153,6 +154,19 @@ export async function processVideo(
     }
   }
 
+  // Transcribe audio track if whisper is configured
+  let transcript: string | null = null;
+  if (WHISPER_BIN) {
+    try {
+      transcript = await transcribe(videoPath);
+      if (transcript) {
+        logger.info({ videoDir }, 'Video audio transcribed');
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Video audio transcription failed');
+    }
+  }
+
   // Save metadata
   const metadata = {
     originalFile: videoFilename,
@@ -162,6 +176,7 @@ export async function processVideo(
     frameCount,
     fps: fps,
     sizeKB,
+    transcript,
     extractedAt: new Date().toISOString(),
   };
   fs.writeFileSync(
@@ -170,13 +185,16 @@ export async function processVideo(
   );
 
   const relativePath = `attachments/${videoFilename}`;
-  const frameInfo =
-    frameCount > 0 ? `, ${frameCount} frames extracted` : '';
-  const content = caption
+  const frameInfo = frameCount > 0 ? `, ${frameCount} frames extracted` : '';
+  let content = caption
     ? `[Video: ${relativePath} (${durationStr}, ${sizeKB}KB${frameInfo})] ${caption}`
     : `[Video: ${relativePath} (${durationStr}, ${sizeKB}KB${frameInfo})]`;
 
-  return { content, relativePath, frameCount, duration };
+  if (transcript) {
+    content += `\nAudio transcript: ${transcript}`;
+  }
+
+  return { content, relativePath, frameCount, duration, transcript };
 }
 
 /** Parse video references from message content. */

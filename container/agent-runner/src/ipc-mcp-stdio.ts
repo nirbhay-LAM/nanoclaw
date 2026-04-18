@@ -505,6 +505,97 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+server.tool(
+  'transcribe_audio',
+  `Transcribe an audio file to text using the host speech-to-text engine (whisper).
+The file must exist in /workspace/group/ (e.g., attachments/voice.ogg or files/recording.m4a).
+Supports: m4a, mp3, ogg, wav, webm, flac, aac, opus.
+This may take 30-90 seconds for longer recordings.`,
+  {
+    file_path: z
+      .string()
+      .describe(
+        'Path to the audio file relative to /workspace/group/ (e.g., "attachments/call.m4a", "files/podcast.mp3")',
+      ),
+  },
+  async (args) => {
+    const fullPath = path.join('/workspace/group', args.file_path);
+    if (!fs.existsSync(fullPath)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error: File not found at ${fullPath}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const REQUESTS_DIR = path.join(IPC_DIR, 'requests');
+    const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
+
+    writeIpcFile(REQUESTS_DIR, {
+      type: 'transcribe_audio',
+      requestId,
+      filePath: args.file_path,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Poll for response from host
+    const responseFile = path.join(RESPONSES_DIR, `${requestId}.json`);
+    const TIMEOUT_MS = 120_000;
+    const POLL_MS = 1_000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < TIMEOUT_MS) {
+      if (fs.existsSync(responseFile)) {
+        try {
+          const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (response.status === 'success' && response.result) {
+            return {
+              content: [{ type: 'text' as const, text: response.result }],
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Transcription failed: ${response.error || 'unknown error'}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error reading transcription response: ${err}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Transcription timed out after 2 minutes.',
+        },
+      ],
+      isError: true,
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

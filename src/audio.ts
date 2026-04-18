@@ -82,7 +82,7 @@ export async function processAudio(
  * Transcribe an audio file using ffmpeg + whisper-cli.
  * Returns the transcript text, or null on failure.
  */
-async function transcribe(audioPath: string): Promise<string | null> {
+export async function transcribe(audioPath: string): Promise<string | null> {
   const tmpId = crypto.randomUUID();
   const tmpWav = path.join(os.tmpdir(), `nanoclaw-${tmpId}.wav`);
 

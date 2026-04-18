@@ -15,16 +15,18 @@ vi.mock('./logger.js', () => ({
     error: vi.fn(),
   },
 }));
+vi.mock('./audio.js', () => ({
+  transcribe: vi.fn(),
+}));
+vi.mock('./config.js', () => ({
+  WHISPER_BIN: '/usr/local/bin/whisper',
+  WHISPER_MODEL: 'base',
+}));
 
-import {
-  isVideoMessage,
-  processVideo,
-  parseVideoReferences,
-} from './video.js';
+import { transcribe } from './audio.js';
+import { isVideoMessage, processVideo, parseVideoReferences } from './video.js';
 
-function mockExecFile(
-  ...results: Array<{ stdout?: string; error?: Error }>
-) {
+function mockExecFile(...results: Array<{ stdout?: string; error?: Error }>) {
   const mock = vi.mocked(execFile);
   for (const result of results) {
     mock.mockImplementationOnce(((
@@ -95,6 +97,7 @@ describe('video processing', () => {
 
   describe('processVideo', () => {
     it('saves video and extracts frames', async () => {
+      vi.mocked(transcribe).mockResolvedValue(null);
       // Mock ffprobe
       mockExecFile({
         stdout: JSON.stringify({
@@ -124,7 +127,43 @@ describe('video processing', () => {
       );
       expect(result!.frameCount).toBe(3);
       expect(result!.duration).toBe(10.5);
+      expect(result!.transcript).toBeNull();
       expect(fs.writeFileSync).toHaveBeenCalled();
+    });
+
+    it('includes audio transcript when available', async () => {
+      vi.mocked(transcribe).mockResolvedValue('Hey Doc, come pick the winner');
+      mockExecFile({
+        stdout: JSON.stringify({
+          format: { duration: '5.0' },
+          streams: [{ codec_type: 'video', width: 1080, height: 1920 }],
+        }),
+      });
+      mockExecFile({ stdout: '' });
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        'frame_0001.jpg',
+        'frame_0002.jpg',
+      ] as any);
+
+      const buffer = Buffer.from('fake-video-data');
+      const result = await processVideo(buffer, '/tmp/groups/test', 'Clip 1');
+
+      expect(result).not.toBeNull();
+      expect(result!.content).toContain('Audio transcript: Hey Doc, come pick the winner');
+      expect(result!.transcript).toBe('Hey Doc, come pick the winner');
+      expect(transcribe).toHaveBeenCalled();
+    });
+
+    it('falls back gracefully when transcription fails', async () => {
+      vi.mocked(transcribe).mockRejectedValue(new Error('whisper not found'));
+      mockExecFile({ error: new Error('ffprobe not found') });
+
+      const buffer = Buffer.from('fake-video-data');
+      const result = await processVideo(buffer, '/tmp/groups/test', '');
+
+      expect(result).not.toBeNull();
+      expect(result!.content).not.toContain('Audio transcript');
+      expect(result!.transcript).toBeNull();
     });
 
     it('returns null on empty buffer', async () => {
@@ -137,6 +176,7 @@ describe('video processing', () => {
     });
 
     it('falls back gracefully when ffprobe fails', async () => {
+      vi.mocked(transcribe).mockResolvedValue(null);
       mockExecFile({ error: new Error('ffprobe not found') });
 
       const buffer = Buffer.from('fake-video-data');
@@ -148,6 +188,7 @@ describe('video processing', () => {
     });
 
     it('returns content without caption when none provided', async () => {
+      vi.mocked(transcribe).mockResolvedValue(null);
       mockExecFile({ error: new Error('ffprobe not found') });
 
       const buffer = Buffer.from('fake-video-data');

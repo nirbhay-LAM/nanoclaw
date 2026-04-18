@@ -364,6 +364,27 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
 }
 
+/**
+ * Returns ALL messages (user + bot) for a chatJid since a timestamp.
+ * Unlike getMessagesSince which filters out bot messages, this returns the
+ * full bidirectional conversation for archiving purposes.
+ */
+export function getConversationMessages(
+  chatJid: string,
+  sinceTimestamp: string,
+): NewMessage[] {
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+    FROM messages
+    WHERE chat_jid = ? AND timestamp > ?
+      AND content != '' AND content IS NOT NULL
+    ORDER BY timestamp
+  `;
+  return db
+    .prepare(sql)
+    .all(chatJid, sinceTimestamp) as NewMessage[];
+}
+
 export function getMessageFromMe(messageId: string, chatJid: string): boolean {
   const row = db
     .prepare(

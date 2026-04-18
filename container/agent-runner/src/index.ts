@@ -433,6 +433,9 @@ async function runQuery(
     options: {
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
+      model: 'claude-opus-4-6',
+      maxThinkingTokens: 200000,
+      betas: ['context-1m-2025-08-07'],
       resume: sessionId,
       resumeSessionAt: resumeAt,
       systemPrompt: globalClaudeMd
@@ -449,6 +452,9 @@ async function runQuery(
         'mcp__nanoclaw__*',
         ...(fs.existsSync('/workspace/email/config/email-identities.json')
           ? ['mcp__email__*']
+          : []),
+        ...(fs.existsSync('/workspace/email/creds/lam/credentials.json')
+          ? ['mcp__gbp__*']
           : []),
       ],
       env: sdkEnv,
@@ -471,6 +477,16 @@ async function runQuery(
               email: {
                 command: 'node',
                 args: ['/app/email-mcp/dist/email-mcp.js'],
+                env: {},
+              },
+            }
+          : {}),
+        // GBP MCP: pre-compiled at Docker build time, only started if creds exist
+        ...(fs.existsSync('/workspace/email/creds/lam/credentials.json')
+          ? {
+              gbp: {
+                command: 'node',
+                args: ['/app/gbp-mcp/dist/gbp-mcp.js'],
                 env: {},
               },
             }

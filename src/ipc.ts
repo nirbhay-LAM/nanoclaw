@@ -39,6 +39,7 @@ export interface IpcDeps {
   refreshSession: (groupFolder: string) => void;
   statusHeartbeat?: () => void;
   recoverPendingMessages?: () => void;
+  transcribeAudio?: (audioPath: string) => Promise<string | null>;
 }
 
 let ipcWatcherRunning = false;
@@ -257,6 +258,55 @@ export function startIpcWatcher(deps: IpcDeps): void {
         }
       } catch (err) {
         logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
+      }
+
+      // Process requests from this group's IPC directory (request-response pattern)
+      if (deps.transcribeAudio) {
+        const requestsDir = path.join(ipcBaseDir, sourceGroup, 'requests');
+        const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
+        try {
+          if (fs.existsSync(requestsDir)) {
+            const requestFiles = fs
+              .readdirSync(requestsDir)
+              .filter((f) => f.endsWith('.json'));
+            for (const file of requestFiles) {
+              const filePath = path.join(requestsDir, file);
+              try {
+                const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+                await processRequestIpc(
+                  data,
+                  sourceGroup,
+                  responsesDir,
+                  deps,
+                );
+                fs.unlinkSync(filePath);
+              } catch (err) {
+                logger.error({ file, sourceGroup, err }, 'Error processing IPC request');
+                const errorDir = path.join(ipcBaseDir, 'errors');
+                fs.mkdirSync(errorDir, { recursive: true });
+                fs.renameSync(filePath, path.join(errorDir, `${sourceGroup}-${file}`));
+              }
+            }
+          }
+
+          // Clean up stale response files (older than 5 minutes)
+          if (fs.existsSync(responsesDir)) {
+            const staleThreshold = Date.now() - 5 * 60 * 1000;
+            for (const file of fs.readdirSync(responsesDir).filter((f) => f.endsWith('.json'))) {
+              try {
+                const stat = fs.statSync(path.join(responsesDir, file));
+                if (stat.mtimeMs < staleThreshold) {
+                  fs.unlinkSync(path.join(responsesDir, file));
+                  logger.debug({ file, sourceGroup }, 'Cleaned up stale IPC response');
+                }
+              } catch {
+                // Ignore cleanup errors
+              }
+            }
+          }
+        } catch (err) {
+          logger.error({ err, sourceGroup }, 'Error reading IPC requests directory');
+        }
       }
     }
 
@@ -597,5 +647,77 @@ export async function processTaskIpc(
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
+  }
+}
+
+/**
+ * Process a single IPC request (request-response pattern).
+ * Writes a response file to responsesDir for the container to pick up.
+ */
+export async function processRequestIpc(
+  data: { type?: string; requestId?: string; filePath?: string },
+  sourceGroup: string,
+  responsesDir: string,
+  deps: Pick<IpcDeps, 'transcribeAudio'>,
+): Promise<void> {
+  if (!data.requestId) {
+    throw new Error('IPC request missing requestId');
+  }
+
+  fs.mkdirSync(responsesDir, { recursive: true });
+  const responsePath = path.join(responsesDir, `${data.requestId}.json`);
+  const tempResponsePath = `${responsePath}.tmp`;
+
+  const writeResponse = (response: object) => {
+    fs.writeFileSync(tempResponsePath, JSON.stringify(response));
+    fs.renameSync(tempResponsePath, responsePath);
+  };
+
+  if (data.type === 'transcribe_audio' && data.filePath && deps.transcribeAudio) {
+    const groupDir = path.resolve(GROUPS_DIR, sourceGroup);
+    const hostFilePath = path.resolve(groupDir, data.filePath);
+
+    if (!hostFilePath.startsWith(groupDir + path.sep) && hostFilePath !== groupDir) {
+      logger.warn(
+        { filePath: data.filePath, sourceGroup },
+        'IPC request path traversal blocked',
+      );
+      writeResponse({
+        requestId: data.requestId,
+        status: 'error',
+        error: 'Path traversal blocked',
+      });
+      return;
+    }
+
+    if (!fs.existsSync(hostFilePath)) {
+      writeResponse({
+        requestId: data.requestId,
+        status: 'error',
+        error: `File not found: ${data.filePath}`,
+      });
+      return;
+    }
+
+    const transcript = await deps.transcribeAudio(hostFilePath);
+    if (transcript) {
+      writeResponse({
+        requestId: data.requestId,
+        status: 'success',
+        result: transcript,
+      });
+    } else {
+      writeResponse({
+        requestId: data.requestId,
+        status: 'error',
+        error: 'Transcription failed or returned empty result',
+      });
+    }
+    logger.info(
+      { requestId: data.requestId, filePath: data.filePath, sourceGroup },
+      'IPC transcription request processed',
+    );
+  } else {
+    logger.warn({ type: data.type, sourceGroup }, 'Unknown IPC request type');
   }
 }

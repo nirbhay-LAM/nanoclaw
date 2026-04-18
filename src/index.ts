@@ -2,6 +2,10 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  formatConversationArchive,
+  writeConversationArchive,
+} from './archive.js';
+import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
@@ -32,6 +36,7 @@ import {
   getAllSessions,
   getAllTasks,
   getMessageFromMe,
+  getConversationMessages,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -46,6 +51,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { transcribe } from './audio.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   restoreRemoteControl,
@@ -84,6 +90,34 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 let statusTracker: StatusTracker;
+
+/**
+ * Archive the day's messages from the DB to a markdown file in conversations/.
+ * Called before session refresh so the new session can search prior context.
+ */
+function archiveDailyConversation(groupFolder: string): void {
+  const chatJid = Object.entries(registeredGroups)
+    .find(([, group]) => group.folder === groupFolder)?.[0];
+
+  if (!chatJid) {
+    logger.warn({ groupFolder }, 'No chatJid found for group folder, skipping archive');
+    return;
+  }
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const messages = getConversationMessages(chatJid, since);
+
+  if (messages.length === 0) {
+    logger.info({ groupFolder }, 'No messages to archive');
+    return;
+  }
+
+  const date = new Date().toISOString().split('T')[0];
+  const content = formatConversationArchive(messages, date, ASSISTANT_NAME, TIMEZONE);
+  const groupPath = resolveGroupFolderPath(groupFolder);
+  const filename = writeConversationArchive(groupPath, content, date);
+  logger.info({ groupFolder, filename, messageCount: messages.length }, 'Daily conversation archived');
+}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -864,12 +898,18 @@ async function main(): Promise<void> {
       }
     },
     refreshSession: (groupFolder: string) => {
+      try {
+        archiveDailyConversation(groupFolder);
+      } catch (err) {
+        logger.error({ err, groupFolder }, 'Failed to archive daily conversation');
+      }
       delete sessions[groupFolder];
       deleteSession(groupFolder);
       logger.info({ groupFolder }, 'Session cleared for refresh');
     },
     statusHeartbeat: () => statusTracker.heartbeatCheck(),
     recoverPendingMessages,
+    transcribeAudio: transcribe,
   });
   // Recover status tracker AFTER channels connect, so recovery reactions
   // can actually be sent via the WhatsApp channel.
