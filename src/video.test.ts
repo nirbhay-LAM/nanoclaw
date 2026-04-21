@@ -149,7 +149,9 @@ describe('video processing', () => {
       const result = await processVideo(buffer, '/tmp/groups/test', 'Clip 1');
 
       expect(result).not.toBeNull();
-      expect(result!.content).toContain('Audio transcript: Hey Doc, come pick the winner');
+      expect(result!.content).toContain(
+        'Audio transcript: Hey Doc, come pick the winner',
+      );
       expect(result!.transcript).toBe('Hey Doc, come pick the winner');
       expect(transcribe).toHaveBeenCalled();
     });

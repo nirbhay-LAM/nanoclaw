@@ -273,18 +273,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
               const filePath = path.join(requestsDir, file);
               try {
                 const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-                await processRequestIpc(
-                  data,
-                  sourceGroup,
-                  responsesDir,
-                  deps,
-                );
+                await processRequestIpc(data, sourceGroup, responsesDir, deps);
                 fs.unlinkSync(filePath);
               } catch (err) {
-                logger.error({ file, sourceGroup, err }, 'Error processing IPC request');
+                logger.error(
+                  { file, sourceGroup, err },
+                  'Error processing IPC request',
+                );
                 const errorDir = path.join(ipcBaseDir, 'errors');
                 fs.mkdirSync(errorDir, { recursive: true });
-                fs.renameSync(filePath, path.join(errorDir, `${sourceGroup}-${file}`));
+                fs.renameSync(
+                  filePath,
+                  path.join(errorDir, `${sourceGroup}-${file}`),
+                );
               }
             }
           }
@@ -292,12 +293,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
           // Clean up stale response files (older than 5 minutes)
           if (fs.existsSync(responsesDir)) {
             const staleThreshold = Date.now() - 5 * 60 * 1000;
-            for (const file of fs.readdirSync(responsesDir).filter((f) => f.endsWith('.json'))) {
+            for (const file of fs
+              .readdirSync(responsesDir)
+              .filter((f) => f.endsWith('.json'))) {
               try {
                 const stat = fs.statSync(path.join(responsesDir, file));
                 if (stat.mtimeMs < staleThreshold) {
                   fs.unlinkSync(path.join(responsesDir, file));
-                  logger.debug({ file, sourceGroup }, 'Cleaned up stale IPC response');
+                  logger.debug(
+                    { file, sourceGroup },
+                    'Cleaned up stale IPC response',
+                  );
                 }
               } catch {
                 // Ignore cleanup errors
@@ -305,7 +311,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
             }
           }
         } catch (err) {
-          logger.error({ err, sourceGroup }, 'Error reading IPC requests directory');
+          logger.error(
+            { err, sourceGroup },
+            'Error reading IPC requests directory',
+          );
         }
       }
     }
@@ -673,11 +682,18 @@ export async function processRequestIpc(
     fs.renameSync(tempResponsePath, responsePath);
   };
 
-  if (data.type === 'transcribe_audio' && data.filePath && deps.transcribeAudio) {
+  if (
+    data.type === 'transcribe_audio' &&
+    data.filePath &&
+    deps.transcribeAudio
+  ) {
     const groupDir = path.resolve(GROUPS_DIR, sourceGroup);
     const hostFilePath = path.resolve(groupDir, data.filePath);
 
-    if (!hostFilePath.startsWith(groupDir + path.sep) && hostFilePath !== groupDir) {
+    if (
+      !hostFilePath.startsWith(groupDir + path.sep) &&
+      hostFilePath !== groupDir
+    ) {
       logger.warn(
         { filePath: data.filePath, sourceGroup },
         'IPC request path traversal blocked',

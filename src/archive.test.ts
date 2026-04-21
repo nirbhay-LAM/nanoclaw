@@ -3,13 +3,18 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { formatConversationArchive, writeConversationArchive } from './archive.js';
+import {
+  formatConversationArchive,
+  writeConversationArchive,
+} from './archive.js';
 import type { NewMessage } from './types.js';
 
 const TIMEZONE = 'America/Chicago';
 const ASSISTANT_NAME = 'RSK';
 
-function makeMessage(overrides: Partial<NewMessage> & { id: string }): NewMessage {
+function makeMessage(
+  overrides: Partial<NewMessage> & { id: string },
+): NewMessage {
   return {
     chat_jid: 'group@g.us',
     sender: 'user@s.whatsapp.net',
@@ -27,10 +32,20 @@ describe('formatConversationArchive', () => {
   it('formats messages into markdown with header', () => {
     const messages = [
       makeMessage({ id: 'm1', sender_name: 'Alice', content: 'Hello there' }),
-      makeMessage({ id: 'm2', sender_name: 'Bob', content: 'Hi back', timestamp: '2024-06-15T14:31:00.000Z' }),
+      makeMessage({
+        id: 'm2',
+        sender_name: 'Bob',
+        content: 'Hi back',
+        timestamp: '2024-06-15T14:31:00.000Z',
+      }),
     ];
 
-    const result = formatConversationArchive(messages, '2024-06-15', ASSISTANT_NAME, TIMEZONE);
+    const result = formatConversationArchive(
+      messages,
+      '2024-06-15',
+      ASSISTANT_NAME,
+      TIMEZONE,
+    );
 
     expect(result).toContain('# Daily Conversation Archive — 2024-06-15');
     expect(result).toContain('Messages: 2 | Period: last 24h');
@@ -45,7 +60,12 @@ describe('formatConversationArchive', () => {
       makeMessage({ id: 'm1', is_from_me: true, content: 'I am the bot' }),
     ];
 
-    const result = formatConversationArchive(messages, '2024-06-15', ASSISTANT_NAME, TIMEZONE);
+    const result = formatConversationArchive(
+      messages,
+      '2024-06-15',
+      ASSISTANT_NAME,
+      TIMEZONE,
+    );
 
     expect(result).toContain(`**${ASSISTANT_NAME}**`);
     expect(result).not.toContain('**Alice**');
@@ -56,7 +76,12 @@ describe('formatConversationArchive', () => {
       makeMessage({ id: 'm1', sender_name: '', content: 'anon' }),
     ];
 
-    const result = formatConversationArchive(messages, '2024-06-15', ASSISTANT_NAME, TIMEZONE);
+    const result = formatConversationArchive(
+      messages,
+      '2024-06-15',
+      ASSISTANT_NAME,
+      TIMEZONE,
+    );
 
     expect(result).toContain('**User**');
   });
@@ -67,7 +92,12 @@ describe('formatConversationArchive', () => {
       makeMessage({ id: 'm1', timestamp: '2024-06-15T14:30:00.000Z' }),
     ];
 
-    const result = formatConversationArchive(messages, '2024-06-15', ASSISTANT_NAME, TIMEZONE);
+    const result = formatConversationArchive(
+      messages,
+      '2024-06-15',
+      ASSISTANT_NAME,
+      TIMEZONE,
+    );
 
     expect(result).toContain('9:30 AM');
   });
@@ -76,7 +106,12 @@ describe('formatConversationArchive', () => {
     const content = 'Line 1\nLine 2\n\nLine 4 with **markdown**';
     const messages = [makeMessage({ id: 'm1', content })];
 
-    const result = formatConversationArchive(messages, '2024-06-15', ASSISTANT_NAME, TIMEZONE);
+    const result = formatConversationArchive(
+      messages,
+      '2024-06-15',
+      ASSISTANT_NAME,
+      TIMEZONE,
+    );
 
     expect(result).toContain(content);
   });
@@ -96,7 +131,11 @@ describe('writeConversationArchive', () => {
   });
 
   it('creates conversations/ directory and writes file', () => {
-    const filename = writeConversationArchive(tmpDir, 'archive content', '2024-06-15');
+    const filename = writeConversationArchive(
+      tmpDir,
+      'archive content',
+      '2024-06-15',
+    );
 
     expect(filename).toBe('2024-06-15-daily.md');
     const filePath = path.join(tmpDir, 'conversations', filename);
@@ -107,27 +146,47 @@ describe('writeConversationArchive', () => {
   it('uses unique filename when date file already exists', () => {
     const conversationsDir = path.join(tmpDir, 'conversations');
     fs.mkdirSync(conversationsDir, { recursive: true });
-    fs.writeFileSync(path.join(conversationsDir, '2024-06-15-daily.md'), 'existing');
+    fs.writeFileSync(
+      path.join(conversationsDir, '2024-06-15-daily.md'),
+      'existing',
+    );
 
-    const filename = writeConversationArchive(tmpDir, 'new content', '2024-06-15');
+    const filename = writeConversationArchive(
+      tmpDir,
+      'new content',
+      '2024-06-15',
+    );
 
     expect(filename).not.toBe('2024-06-15-daily.md');
     expect(filename).toMatch(/^2024-06-15-daily-\d+\.md$/);
 
     // Both files exist
-    expect(fs.existsSync(path.join(conversationsDir, '2024-06-15-daily.md'))).toBe(true);
+    expect(
+      fs.existsSync(path.join(conversationsDir, '2024-06-15-daily.md')),
+    ).toBe(true);
     expect(fs.existsSync(path.join(conversationsDir, filename))).toBe(true);
 
     // Original untouched
-    expect(fs.readFileSync(path.join(conversationsDir, '2024-06-15-daily.md'), 'utf-8')).toBe('existing');
+    expect(
+      fs.readFileSync(
+        path.join(conversationsDir, '2024-06-15-daily.md'),
+        'utf-8',
+      ),
+    ).toBe('existing');
   });
 
   it('handles nested group path that does not exist yet', () => {
     const deepPath = path.join(tmpDir, 'groups', 'whatsapp_main');
     fs.mkdirSync(deepPath, { recursive: true });
 
-    const filename = writeConversationArchive(deepPath, 'content', '2024-06-15');
+    const filename = writeConversationArchive(
+      deepPath,
+      'content',
+      '2024-06-15',
+    );
 
-    expect(fs.existsSync(path.join(deepPath, 'conversations', filename))).toBe(true);
+    expect(fs.existsSync(path.join(deepPath, 'conversations', filename))).toBe(
+      true,
+    );
   });
 });

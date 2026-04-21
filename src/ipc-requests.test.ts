@@ -52,7 +52,9 @@ describe('processRequestIpc: transcribe_audio', () => {
     const audioPath = path.join(groupDir, 'attachments', 'test.m4a');
     fs.writeFileSync(audioPath, Buffer.from('fake audio data'));
 
-    const transcribeAudio = vi.fn(async () => 'Hello world this is a test transcript');
+    const transcribeAudio = vi.fn(
+      async () => 'Hello world this is a test transcript',
+    );
     const requestId = 'req-test-success';
 
     await processRequestIpc(
@@ -74,7 +76,11 @@ describe('processRequestIpc: transcribe_audio', () => {
     const requestId = 'req-test-missing';
 
     await processRequestIpc(
-      { type: 'transcribe_audio', requestId, filePath: 'attachments/nonexistent.m4a' },
+      {
+        type: 'transcribe_audio',
+        requestId,
+        filePath: 'attachments/nonexistent.m4a',
+      },
       'whatsapp_main',
       responsesDir,
       { transcribeAudio },
@@ -147,14 +153,22 @@ describe('processRequestIpc: transcribe_audio', () => {
     const requestId = 'req-test-atomic';
 
     await processRequestIpc(
-      { type: 'transcribe_audio', requestId, filePath: 'attachments/atomic.m4a' },
+      {
+        type: 'transcribe_audio',
+        requestId,
+        filePath: 'attachments/atomic.m4a',
+      },
       'whatsapp_main',
       responsesDir,
       { transcribeAudio },
     );
 
     // Response file exists, no .tmp file lingering
-    expect(fs.existsSync(path.join(responsesDir, `${requestId}.json`))).toBe(true);
-    expect(fs.existsSync(path.join(responsesDir, `${requestId}.json.tmp`))).toBe(false);
+    expect(fs.existsSync(path.join(responsesDir, `${requestId}.json`))).toBe(
+      true,
+    );
+    expect(
+      fs.existsSync(path.join(responsesDir, `${requestId}.json.tmp`)),
+    ).toBe(false);
   });
 });

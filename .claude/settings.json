@@ -1,1 +1,14 @@
-{}
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "DIRTY=$(git status --porcelain 2>/dev/null | head -20); if [ -n \"$DIRTY\" ]; then COUNT=$(echo \"$DIRTY\" | wc -l | tr -d \" \"); echo \"{\\\"systemMessage\\\":\\\"Uncommitted changes detected ($COUNT files). Run git status for details and remind the user to review and commit.\\\"}\"; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

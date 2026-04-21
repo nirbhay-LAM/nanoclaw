@@ -96,11 +96,15 @@ let statusTracker: StatusTracker;
  * Called before session refresh so the new session can search prior context.
  */
 function archiveDailyConversation(groupFolder: string): void {
-  const chatJid = Object.entries(registeredGroups)
-    .find(([, group]) => group.folder === groupFolder)?.[0];
+  const chatJid = Object.entries(registeredGroups).find(
+    ([, group]) => group.folder === groupFolder,
+  )?.[0];
 
   if (!chatJid) {
-    logger.warn({ groupFolder }, 'No chatJid found for group folder, skipping archive');
+    logger.warn(
+      { groupFolder },
+      'No chatJid found for group folder, skipping archive',
+    );
     return;
   }
 
@@ -113,10 +117,18 @@ function archiveDailyConversation(groupFolder: string): void {
   }
 
   const date = new Date().toISOString().split('T')[0];
-  const content = formatConversationArchive(messages, date, ASSISTANT_NAME, TIMEZONE);
+  const content = formatConversationArchive(
+    messages,
+    date,
+    ASSISTANT_NAME,
+    TIMEZONE,
+  );
   const groupPath = resolveGroupFolderPath(groupFolder);
   const filename = writeConversationArchive(groupPath, content, date);
-  logger.info({ groupFolder, filename, messageCount: messages.length }, 'Daily conversation archived');
+  logger.info(
+    { groupFolder, filename, messageCount: messages.length },
+    'Daily conversation archived',
+  );
 }
 
 function loadState(): void {
@@ -485,6 +497,7 @@ async function runAgent(
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
+      () => queue.resetWatchdog(chatJid), // Heartbeat: reset watchdog on SDK activity
     );
 
     if (output.newSessionId) {
@@ -901,7 +914,10 @@ async function main(): Promise<void> {
       try {
         archiveDailyConversation(groupFolder);
       } catch (err) {
-        logger.error({ err, groupFolder }, 'Failed to archive daily conversation');
+        logger.error(
+          { err, groupFolder },
+          'Failed to archive daily conversation',
+        );
       }
       delete sessions[groupFolder];
       deleteSession(groupFolder);

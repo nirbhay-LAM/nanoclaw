@@ -28,7 +28,7 @@ export function formatConversationArchive(
       hour12: true,
       timeZone: timezone,
     });
-    const sender = msg.is_from_me ? assistantName : (msg.sender_name || 'User');
+    const sender = msg.is_from_me ? assistantName : msg.sender_name || 'User';
     lines.push(`**${sender}** (${time}):`);
     lines.push(msg.content);
     lines.push('');

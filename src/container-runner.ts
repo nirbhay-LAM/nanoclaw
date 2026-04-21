@@ -315,6 +315,7 @@ export async function runContainerAgent(
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  onHeartbeat?: () => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
@@ -435,9 +436,12 @@ export async function runContainerAgent(
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
         if (line) logger.debug({ container: group.folder }, line);
+        // Heartbeat: agent-runner msg lines prove the SDK is actively processing.
+        // This lets the watchdog distinguish "busy" from "stuck".
+        if (onHeartbeat && line.includes('[agent-runner] [msg #')) {
+          onHeartbeat();
+        }
       }
-      // Don't reset timeout on stderr — SDK writes debug logs continuously.
-      // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
       if (chunk.length > remaining) {
