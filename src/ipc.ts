@@ -9,6 +9,7 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { getMimeType } from './mime.js';
+import { redactSecrets } from './redact.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -100,7 +101,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  await deps.sendMessage(data.chatJid, redactSecrets(data.text as string));
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -401,6 +402,13 @@ export async function processTaskIpc(
               tz: TIMEZONE,
             });
             nextRun = interval.next().toISOString();
+            // Log next 3 runs for verification
+            const preview = [nextRun];
+            for (let i = 0; i < 2; i++) preview.push(interval.next().toISOString());
+            logger.info(
+              { cron: data.schedule_value, nextRuns: preview },
+              'Cron task scheduled — verify next run times',
+            );
           } catch {
             logger.warn(
               { scheduleValue: data.schedule_value },

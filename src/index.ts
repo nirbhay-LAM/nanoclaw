@@ -52,6 +52,7 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { transcribe } from './audio.js';
+import { redactSecrets } from './redact.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   restoreRemoteControl,
@@ -357,7 +358,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             ? result.result
             : JSON.stringify(result.result);
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        const stripped = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        // Redact any known credentials from outgoing messages
+        const text = redactSecrets(stripped);
         logger.info(
           { group: group.name },
           `Agent output: ${raw.slice(0, 200)}`,
