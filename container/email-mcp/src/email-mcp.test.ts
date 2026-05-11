@@ -208,6 +208,59 @@ describe('buildRawEmail', () => {
     expect(decoded).toContain(Buffer.from('pdf-data').toString('base64'));
   });
 
+  it('uses multipart/alternative for HTML email', () => {
+    const raw = buildRawEmail({
+      from: 'a@b.com',
+      fromName: 'Alice',
+      to: 'b@c.com',
+      subject: 'HTML Report',
+      body: 'Plain text fallback',
+      htmlBody: '<h1>Hello</h1><p>World</p>',
+    });
+    const decoded = Buffer.from(raw, 'base64url').toString('utf-8');
+    expect(decoded).toContain('multipart/alternative');
+    expect(decoded).toContain('text/plain; charset="UTF-8"');
+    expect(decoded).toContain('text/html; charset="UTF-8"');
+    expect(decoded).toContain('Plain text fallback');
+    expect(decoded).toContain('<h1>Hello</h1><p>World</p>');
+  });
+
+  it('uses nested multipart for HTML + attachments', () => {
+    const raw = buildRawEmail({
+      from: 'a@b.com',
+      fromName: 'Alice',
+      to: 'b@c.com',
+      subject: 'HTML with attachment',
+      body: 'Plain text',
+      htmlBody: '<p>HTML body</p>',
+      attachments: [
+        { filename: 'doc.pdf', mimetype: 'application/pdf', content: Buffer.from('pdf-data') },
+      ],
+    });
+    const decoded = Buffer.from(raw, 'base64url').toString('utf-8');
+    expect(decoded).toContain('multipart/mixed');
+    expect(decoded).toContain('multipart/alternative');
+    expect(decoded).toContain('text/plain; charset="UTF-8"');
+    expect(decoded).toContain('text/html; charset="UTF-8"');
+    expect(decoded).toContain('<p>HTML body</p>');
+    expect(decoded).toContain('Content-Disposition: attachment; filename="doc.pdf"');
+  });
+
+  it('plain text email unchanged when no htmlBody', () => {
+    const raw = buildRawEmail({
+      from: 'a@b.com',
+      fromName: 'A',
+      to: 'b@c.com',
+      subject: 'Plain',
+      body: 'Just text',
+    });
+    const decoded = Buffer.from(raw, 'base64url').toString('utf-8');
+    expect(decoded).toContain('Content-Type: text/plain; charset="UTF-8"');
+    expect(decoded).not.toContain('multipart/alternative');
+    expect(decoded).not.toContain('text/html');
+    expect(decoded).toContain('Just text');
+  });
+
   it('encodes non-ASCII subject via RFC 2047', () => {
     const raw = buildRawEmail({
       from: 'a@b.com',
@@ -477,6 +530,27 @@ describe('handleSendEmail', () => {
     });
 
     expect(result.content[0].text).toContain('alias@biz.com');
+  });
+
+  it('sends HTML email with html_body parameter', async () => {
+    mockOAuthFiles();
+    mockGmailSend.mockResolvedValue({});
+
+    const result = await handleSendEmail({
+      identity: 'personal',
+      to: 'recipient@test.com',
+      subject: 'HTML Test',
+      body: 'Plain text fallback',
+      html_body: '<h1>Report</h1>',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('Email sent');
+    const rawArg = mockGmailSend.mock.calls[0][0].requestBody.raw;
+    const decoded = Buffer.from(rawArg, 'base64url').toString('utf-8');
+    expect(decoded).toContain('multipart/alternative');
+    expect(decoded).toContain('<h1>Report</h1>');
+    expect(decoded).toContain('Plain text fallback');
   });
 
   it('returns error for unknown identity', async () => {

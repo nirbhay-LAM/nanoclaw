@@ -177,9 +177,11 @@ export function buildRawEmail(opts: {
   to: string;
   subject: string;
   body: string;
+  htmlBody?: string;
   attachments?: Array<{ filename: string; mimetype: string; content: Buffer }>;
 }): string {
-  const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const mixedBoundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const altBoundary = `alt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const lines: string[] = [];
 
   lines.push(`From: "${encodeRfc2047(opts.fromName)}" <${opts.from}>`);
@@ -187,16 +189,30 @@ export function buildRawEmail(opts: {
   lines.push(`Subject: ${encodeRfc2047(opts.subject)}`);
   lines.push('MIME-Version: 1.0');
 
-  if (opts.attachments && opts.attachments.length > 0) {
-    lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  const hasAttachments = opts.attachments && opts.attachments.length > 0;
+  const hasHtml = !!opts.htmlBody;
+
+  if (hasAttachments && hasHtml) {
+    // multipart/mixed wrapping multipart/alternative + attachments
+    lines.push(`Content-Type: multipart/mixed; boundary="${mixedBoundary}"`);
     lines.push('');
-    lines.push(`--${boundary}`);
+    lines.push(`--${mixedBoundary}`);
+    lines.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
+    lines.push('');
+    lines.push(`--${altBoundary}`);
     lines.push('Content-Type: text/plain; charset="UTF-8"');
     lines.push('');
     lines.push(opts.body);
+    lines.push('');
+    lines.push(`--${altBoundary}`);
+    lines.push('Content-Type: text/html; charset="UTF-8"');
+    lines.push('');
+    lines.push(opts.htmlBody!);
+    lines.push('');
+    lines.push(`--${altBoundary}--`);
 
-    for (const att of opts.attachments) {
-      lines.push(`--${boundary}`);
+    for (const att of opts.attachments!) {
+      lines.push(`--${mixedBoundary}`);
       lines.push(
         `Content-Type: ${att.mimetype}; name="${att.filename}"`,
       );
@@ -207,8 +223,46 @@ export function buildRawEmail(opts: {
       lines.push('');
       lines.push(att.content.toString('base64'));
     }
-    lines.push(`--${boundary}--`);
+    lines.push(`--${mixedBoundary}--`);
+  } else if (hasAttachments) {
+    // multipart/mixed: plain text + attachments
+    lines.push(`Content-Type: multipart/mixed; boundary="${mixedBoundary}"`);
+    lines.push('');
+    lines.push(`--${mixedBoundary}`);
+    lines.push('Content-Type: text/plain; charset="UTF-8"');
+    lines.push('');
+    lines.push(opts.body);
+
+    for (const att of opts.attachments!) {
+      lines.push(`--${mixedBoundary}`);
+      lines.push(
+        `Content-Type: ${att.mimetype}; name="${att.filename}"`,
+      );
+      lines.push('Content-Transfer-Encoding: base64');
+      lines.push(
+        `Content-Disposition: attachment; filename="${att.filename}"`,
+      );
+      lines.push('');
+      lines.push(att.content.toString('base64'));
+    }
+    lines.push(`--${mixedBoundary}--`);
+  } else if (hasHtml) {
+    // multipart/alternative: plain text + HTML
+    lines.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
+    lines.push('');
+    lines.push(`--${altBoundary}`);
+    lines.push('Content-Type: text/plain; charset="UTF-8"');
+    lines.push('');
+    lines.push(opts.body);
+    lines.push('');
+    lines.push(`--${altBoundary}`);
+    lines.push('Content-Type: text/html; charset="UTF-8"');
+    lines.push('');
+    lines.push(opts.htmlBody!);
+    lines.push('');
+    lines.push(`--${altBoundary}--`);
   } else {
+    // Simple plain text
     lines.push('Content-Type: text/plain; charset="UTF-8"');
     lines.push('');
     lines.push(opts.body);
@@ -324,6 +378,7 @@ export async function handleSendEmail(args: {
   to: string;
   subject: string;
   body: string;
+  html_body?: string;
   attachments?: string[];
 }): Promise<McpResult> {
   const result = validateIdentity(loadConfig(), args.identity);
@@ -358,6 +413,7 @@ export async function handleSendEmail(args: {
       to: args.to,
       subject: args.subject,
       body: args.body,
+      htmlBody: args.html_body,
       attachments: attachments.length > 0 ? attachments : undefined,
     });
 
@@ -741,7 +797,8 @@ server.tool(
     identity: z.string().describe('Which email identity to send from (e.g., "personal", "consulting", "dental"). Use list_identities to see available options.'),
     to: z.string().describe('Recipient email address'),
     subject: z.string().describe('Email subject line'),
-    body: z.string().describe('Email body text'),
+    body: z.string().describe('Plain text email body. When html_body is also provided, this serves as the plain text fallback for email clients that cannot render HTML.'),
+    html_body: z.string().optional().describe('HTML email body. When provided, the email is sent as multipart/alternative with both plain text and HTML versions. Use inline styles on all elements (no <style> blocks) for maximum email client compatibility.'),
     attachments: z.array(z.string()).optional().describe('File names to attach, relative to /workspace/group/files/ (e.g., ["report.docx", "data.xlsx"])'),
   },
   handleSendEmail,

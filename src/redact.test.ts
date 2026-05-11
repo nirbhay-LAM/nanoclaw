@@ -7,7 +7,10 @@ vi.mock('fs', () => ({
     statSync: vi.fn(() => ({ isDirectory: () => true })),
     existsSync: vi.fn((path: string) => path.includes('credentials.json')),
     readFileSync: vi.fn(() =>
-      JSON.stringify({ account: 'test@example.com', password: 'secret-password-123' }),
+      JSON.stringify({
+        account: 'test@example.com',
+        password: 'secret-password-123',
+      }),
     ),
   },
 }));

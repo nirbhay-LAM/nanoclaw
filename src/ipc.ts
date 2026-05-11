@@ -101,7 +101,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, redactSecrets(data.text as string));
+                  await deps.sendMessage(
+                    data.chatJid,
+                    redactSecrets(data.text as string),
+                  );
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -404,7 +407,8 @@ export async function processTaskIpc(
             nextRun = interval.next().toISOString();
             // Log next 3 runs for verification
             const preview = [nextRun];
-            for (let i = 0; i < 2; i++) preview.push(interval.next().toISOString());
+            for (let i = 0; i < 2; i++)
+              preview.push(interval.next().toISOString());
             logger.info(
               { cron: data.schedule_value, nextRuns: preview },
               'Cron task scheduled — verify next run times',
