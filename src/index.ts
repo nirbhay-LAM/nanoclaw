@@ -261,6 +261,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   let prompt = formatMessages(missedMessages, TIMEZONE);
+
+  // Prepend pending task context if a scheduled task recently sent output
+  // (e.g., review draft awaiting approval). This helps the agent understand
+  // what short replies like "Approve" refer to.
+  const pendingContextFile = path.join(
+    resolveGroupFolderPath(group.folder),
+    'pending-task-context.txt',
+  );
+  if (fs.existsSync(pendingContextFile)) {
+    try {
+      const pendingContext = fs.readFileSync(pendingContextFile, 'utf-8');
+      prompt = `${pendingContext}\n\n${prompt}`;
+      fs.unlinkSync(pendingContextFile); // Consume once
+    } catch { /* ignore */ }
+  }
+
   const imageAttachments = parseImageReferences(missedMessages);
   const videoRefs = parseVideoReferences(missedMessages);
 
@@ -300,6 +316,53 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     ].join('\n');
     prompt = recoveryNote + '\n\n' + prompt;
     delete crashRecoveryContext[chatJid];
+  }
+
+  // Check for checkpoint recovery — if a previous session was interrupted
+  // mid-task, prepend resume instructions so the agent continues from where
+  // it left off instead of re-doing completed work.
+  const checkpointPath = path.join(resolveGroupFolderPath(group.folder), 'checkpoint.json');
+  if (fs.existsSync(checkpointPath)) {
+    try {
+      const checkpoint = JSON.parse(
+        fs.readFileSync(checkpointPath, 'utf8'),
+      );
+      const completed = Array.isArray(checkpoint.completedSteps)
+        ? checkpoint.completedSteps.length
+        : 0;
+      const remaining = Array.isArray(checkpoint.remainingSteps)
+        ? checkpoint.remainingSteps.length
+        : 0;
+      const total = completed + remaining;
+      const checkpointContext = [
+        `[CHECKPOINT RECOVERY] A previous session was interrupted while working on: "${checkpoint.task || 'unknown task'}"`,
+        `Progress: ${completed}/${total} steps completed.`,
+        checkpoint.outputSoFar
+          ? `Output saved so far: ${checkpoint.outputSoFar}`
+          : '',
+        checkpoint.resumeInstructions
+          ? `Resume instructions: ${checkpoint.resumeInstructions}`
+          : '',
+        'DO NOT re-do completed steps. Read the saved output file first, then resume from where the previous session left off.',
+        'When the task is fully complete, delete /workspace/group/checkpoint.json.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      prompt = checkpointContext + '\n\n' + prompt;
+      logger.info(
+        {
+          group: group.name,
+          task: checkpoint.task,
+          progress: `${completed}/${total}`,
+        },
+        'Checkpoint recovery detected, prepending resume context',
+      );
+    } catch (err) {
+      logger.warn(
+        { group: group.name, error: err },
+        'Failed to read checkpoint file, ignoring',
+      );
+    }
   }
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -602,7 +665,9 @@ async function startMessageLoop(): Promise<void> {
           // Pipe only new messages to active containers — they already have
           // prior context from their initial prompt. Full context accumulation
           // is handled by processGroupMessages when spawning new containers.
-          const formatted = formatMessages(groupMessages, TIMEZONE);
+          // Tag piped messages so the agent knows this is a NEW user message
+          // that needs immediate attention (not continuation of old context).
+          const formatted = `\n[NEW USER MESSAGE]\n${formatMessages(groupMessages, TIMEZONE)}\n[INSTRUCTIONS: If this is a short confirmation (Approve, Yes, No, Go ahead) or correction to your current work, handle it immediately. If it is a new task or question, acknowledge it briefly ("Got it, will handle next") and continue your current work to completion first. Only stop current work if explicitly told to (Stop, Cancel, Drop it, Urgent).]\n`;
 
           if (queue.sendMessage(chatJid, formatted)) {
             queue.startWatchdog(chatJid);

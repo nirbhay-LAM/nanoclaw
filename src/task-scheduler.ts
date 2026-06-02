@@ -1,6 +1,7 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import path from 'path';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
@@ -187,6 +188,15 @@ async function runTask(
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          // Save last task output as pending action context so the next
+          // conversation container knows what was just sent (e.g., if user
+          // replies "Approve" to a review draft, the new container needs
+          // to know what was approved).
+          try {
+            const pendingFile = path.join(groupDir, 'pending-task-context.txt');
+            const summary = streamedOutput.result.slice(0, 500);
+            fs.writeFileSync(pendingFile, `[CONTEXT: A scheduled task just sent the following to the user. If the user's next message is a short reply like "Approve", "Yes", "Yes please", it is responding to THIS.]\n${summary}\n[END CONTEXT]`);
+          } catch { /* ignore */ }
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {
