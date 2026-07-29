@@ -433,7 +433,7 @@ async function runQuery(
     options: {
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-5',
       maxThinkingTokens: 250000,
       betas: ['context-1m-2025-08-07'],
       resume: sessionId,
