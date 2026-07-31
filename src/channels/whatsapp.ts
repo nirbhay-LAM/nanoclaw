@@ -106,15 +106,15 @@ export class WhatsAppChannel implements Channel {
       printQRInTerminal: false,
       logger: waLogger,
       browser: Browsers.macOS('Chrome'),
-      // We consume live events only — messages.upsert and messages.reaction —
-      // and never register a messaging-history.set handler, so the initial
-      // history sync is fetched and thrown away. Worse, Baileys defaults this
-      // to true and then buffers every event for a 20s timeout waiting for a
-      // history-sync notification that never arrives, delaying messages after
-      // each restart and logging a warning when it gives up. Declining the
-      // sync transitions straight to Online and flushes on the next tick.
-      // Group discovery is unaffected: it comes from messages.upsert.
-      shouldSyncHistoryMessage: () => false,
+      // Deliberately NOT setting shouldSyncHistoryMessage. Returning false for
+      // every sync type stops Baileys seeing the INITIAL_BOOTSTRAP payload that
+      // carries LID mappings, which rc14 warns causes session errors — and this
+      // channel relies on LID (see the LID mapping handling below).
+      //
+      // It is also no longer needed. The 20s startup stall it worked around was
+      // Baileys waiting for a history-sync notification the server never sends
+      // on reconnect; rc14 fixes that upstream by skipping the wait when
+      // creds.accountSyncCounter > 0.
     });
 
     this.sock.ev.on('connection.update', (update) => {
