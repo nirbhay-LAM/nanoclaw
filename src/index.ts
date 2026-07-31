@@ -893,9 +893,13 @@ async function main(): Promise<void> {
     const factory = getChannelFactory(channelName)!;
     const channel = factory(channelOpts);
     if (!channel) {
-      logger.warn(
+      // A channel can be installed without being configured — Telegram stays
+      // available for later without a token today. That is an expected state,
+      // not something needing attention, so it must not boot at warn level.
+      // Genuine failures surface from connect() below.
+      logger.debug(
         { channel: channelName },
-        'Channel installed but credentials missing — skipping. Check .env or re-run the channel skill.',
+        'Channel installed but not configured — skipping. Add credentials to .env or re-run the channel skill to enable it.',
       );
       continue;
     }

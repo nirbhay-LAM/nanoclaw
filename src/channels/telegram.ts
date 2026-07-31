@@ -291,7 +291,10 @@ registerChannel('telegram', (opts: ChannelOpts) => {
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
   if (!token) {
-    logger.warn('Telegram: TELEGRAM_BOT_TOKEN not set');
+    // Not an error: an installed-but-unconfigured channel is a supported state.
+    // The caller logs which channels were skipped; this adds the reason when
+    // running at debug level.
+    logger.debug('Telegram: TELEGRAM_BOT_TOKEN not set');
     return null;
   }
   return new TelegramChannel(token, opts);
