@@ -17,10 +17,12 @@ vi.mock('./logger.js', () => ({
 }));
 vi.mock('./audio.js', () => ({
   transcribe: vi.fn(),
+  transcribeWithDiarization: vi.fn(),
 }));
 vi.mock('./config.js', () => ({
   WHISPER_BIN: '/usr/local/bin/whisper',
   WHISPER_MODEL: 'base',
+  DIARIZE_ENABLED: false,
 }));
 
 import { transcribe } from './audio.js';

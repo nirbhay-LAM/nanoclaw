@@ -34,6 +34,12 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser, claude-code, and Office document libraries globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code docx pptxgenjs exceljs
 
+# Install Mermaid CLI (skip Puppeteer's bundled Chromium download — we use system Chromium)
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN npm install -g @mermaid-js/mermaid-cli
+RUN echo '{"executablePath":"/usr/bin/chromium","args":["--no-sandbox","--disable-gpu"]}' > /usr/local/lib/node_modules/@mermaid-js/mermaid-cli/puppeteer-config.json
+ENV PUPPETEER_SKIP_DOWNLOAD=
+
 # Make globally installed packages resolvable from any working directory
 ENV NODE_PATH=/usr/local/lib/node_modules
 

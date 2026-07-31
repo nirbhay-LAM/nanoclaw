@@ -286,6 +286,33 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
+            // Audio message handling (forwarded audio, non-voice-note audioMessage)
+            if (normalized?.audioMessage && !isVoiceMessage(msg)) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const filename = `audio-${Date.now()}.ogg`;
+                const result = await processAudio(
+                  asBuffer(buffer),
+                  groupDir,
+                  false,
+                  filename,
+                );
+                if (result) {
+                  content = result.content;
+                }
+                logger.info(
+                  { jid: chatJid, filename },
+                  'Downloaded audio message',
+                );
+              } catch (err) {
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Audio message - download failed',
+                );
+              }
+            }
+
             // Audio document handling (.m4a, .mp3, .wav, etc.)
             if (
               normalized?.documentMessage?.mimetype &&

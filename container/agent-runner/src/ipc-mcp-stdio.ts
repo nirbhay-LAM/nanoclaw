@@ -596,6 +596,109 @@ This may take 30-90 seconds for longer recordings.`,
   },
 );
 
+server.tool(
+  'generate_image',
+  `Generate an image using local AI (Flux model via Draw Things). Creates professional-quality images for marketing, social media, presentations, and creative projects. Runs locally on the host machine — FREE, no API costs.
+
+Generation takes 30-90 seconds depending on size. Be patient.
+
+QUALITY GUIDELINES:
+- Be extremely specific in prompts. Include style, colors, composition, mood, lighting.
+- For marketing: specify brand colors, text placement, target platform dimensions.
+- For social media: use 1024x1024 (square) or 1024x1792 (portrait/story).
+- For professional: use clean, corporate styling with specific color schemes.
+- For photorealism: include "photorealistic, professional photography, natural lighting"
+- Flux is weaker at text-in-images. For text overlays, generate the image first then use Sharp to add text.`,
+  {
+    prompt: z
+      .string()
+      .describe('Detailed image generation prompt. Be specific about style, colors, composition.'),
+    size: z
+      .enum(['1024x1024', '1024x1792', '1792x1024'])
+      .default('1024x1024')
+      .describe('Image dimensions. 1024x1024=square, 1024x1792=portrait/story, 1792x1024=landscape'),
+    quality: z
+      .enum(['low', 'medium', 'high'])
+      .default('high')
+      .describe('Image quality. high=best detail, medium=balanced, low=fast/cheap'),
+    output_filename: z
+      .string()
+      .default('generated-image.png')
+      .describe('Filename for the output in /workspace/group/files/'),
+  },
+  async (args) => {
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const REQUESTS_DIR = path.join(IPC_DIR, 'requests');
+    const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
+
+    writeIpcFile(REQUESTS_DIR, {
+      type: 'generate_image',
+      requestId,
+      prompt: args.prompt,
+      size: args.size,
+      quality: args.quality,
+      outputFilename: args.output_filename,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Poll for response from host
+    const responseFile = path.join(RESPONSES_DIR, `${requestId}.json`);
+    const TIMEOUT_MS = 120_000;
+    const POLL_MS = 1_000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < TIMEOUT_MS) {
+      if (fs.existsSync(responseFile)) {
+        try {
+          const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+          if (response.status === 'success' && response.result) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Image generated: /workspace/group/${response.result}`,
+                },
+              ],
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Image generation failed: ${response.error || 'unknown error'}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error reading image response: ${err}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Image generation timed out after 2 minutes.',
+        },
+      ],
+      isError: true,
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

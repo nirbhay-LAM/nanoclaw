@@ -373,17 +373,98 @@ export async function handleListIdentities(): Promise<McpResult> {
   };
 }
 
-export async function handleSendEmail(args: {
-  identity: string;
-  to: string;
-  subject: string;
-  body: string;
-  html_body?: string;
-  attachments?: string[];
-}): Promise<McpResult> {
+/**
+ * Request user confirmation via IPC before sending.
+ * Writes a request to /workspace/ipc/requests/, host sends WhatsApp preview,
+ * polls for response with explicit approval.
+ */
+async function requestSendConfirmation(
+  from: string,
+  to: string,
+  subject: string,
+  bodyPreview: string,
+): Promise<{ approved: boolean; error?: string }> {
+  const IPC_DIR = '/workspace/ipc';
+  const REQUESTS_DIR = path.join(IPC_DIR, 'requests');
+  const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  fs.mkdirSync(REQUESTS_DIR, { recursive: true });
+
+  const preview = `*Email Confirmation Required*\n\nFrom: ${from}\nTo: ${to}\nSubject: ${subject}\n\n${bodyPreview.slice(0, 500)}${bodyPreview.length > 500 ? '...' : ''}\n\nReply SEND to confirm, or CANCEL to abort.`;
+
+  const requestFile = path.join(REQUESTS_DIR, `${requestId}.json`);
+  fs.writeFileSync(
+    requestFile,
+    JSON.stringify({
+      type: 'confirm_action',
+      requestId,
+      message: preview,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+
+  // Poll for response (120s timeout)
+  const responseFile = path.join(RESPONSES_DIR, `${requestId}.json`);
+  const TIMEOUT_MS = 120_000;
+  const POLL_MS = 1_000;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < TIMEOUT_MS) {
+    if (fs.existsSync(responseFile)) {
+      try {
+        const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+        fs.unlinkSync(responseFile);
+        if (response.status === 'approved') {
+          return { approved: true };
+        }
+        return { approved: false, error: response.error || 'Send cancelled by user' };
+      } catch {
+        return { approved: false, error: 'Error reading confirmation response' };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+
+  return { approved: false, error: 'Confirmation timed out (2 minutes). Email not sent.' };
+}
+
+export type ConfirmFn = (
+  from: string,
+  to: string,
+  subject: string,
+  bodyPreview: string,
+) => Promise<{ approved: boolean; error?: string }>;
+
+export async function handleSendEmail(
+  args: {
+    identity: string;
+    to: string;
+    subject: string;
+    body: string;
+    html_body?: string;
+    attachments?: string[];
+  },
+  confirmFn: ConfirmFn = requestSendConfirmation,
+): Promise<McpResult> {
   const result = validateIdentity(loadConfig(), args.identity);
   if (result.error) return result.error;
   const identity = result.identity;
+
+  // Require explicit user confirmation before sending
+  const fromEmail = identity.sendAs || identity.email;
+  const confirmation = await confirmFn(
+    fromEmail,
+    args.to,
+    args.subject,
+    args.body,
+  );
+  if (!confirmation.approved) {
+    return {
+      content: [{ type: 'text' as const, text: confirmation.error || 'Email send cancelled.' }],
+      isError: true,
+    };
+  }
 
   // Load attachments
   const attachments: Array<{ filename: string; mimetype: string; content: Buffer }> = [];
@@ -429,6 +510,63 @@ export async function handleSendEmail(args: {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return {
       content: [{ type: 'text' as const, text: `Failed to send email: ${message}` }],
+      isError: true,
+    };
+  }
+}
+
+const ATTACHMENTS_DIR = '/workspace/group/attachments';
+
+export async function handleDownloadAttachment(args: {
+  identity: string;
+  messageId: string;
+  attachmentId: string;
+  filename: string;
+}): Promise<McpResult> {
+  const result = validateIdentity(loadConfig(), args.identity);
+  if (result.error) return result.error;
+  const identity = result.identity;
+
+  try {
+    const gmail = createGmailClient(identity.account);
+    const res = await gmail.users.messages.attachments.get({
+      userId: 'me',
+      messageId: args.messageId,
+      id: args.attachmentId,
+    });
+
+    const b64Data = res.data.data;
+    if (!b64Data) {
+      return {
+        content: [{ type: 'text' as const, text: 'Attachment data is empty.' }],
+        isError: true,
+      };
+    }
+
+    const buffer = Buffer.from(b64Data, 'base64url');
+    fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true });
+
+    // Avoid overwriting existing files
+    let filename = args.filename;
+    const filePath = path.join(ATTACHMENTS_DIR, filename);
+    const finalPath = fs.existsSync(filePath)
+      ? path.join(ATTACHMENTS_DIR, `${Date.now()}-${filename}`)
+      : filePath;
+    const finalFilename = path.basename(finalPath);
+
+    fs.writeFileSync(finalPath, buffer);
+    const sizeKB = Math.round(buffer.length / 1024);
+
+    return {
+      content: [{
+        type: 'text' as const,
+        text: `Attachment downloaded: attachments/${finalFilename} (${sizeKB}KB)`,
+      }],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return {
+      content: [{ type: 'text' as const, text: `Failed to download attachment: ${message}` }],
       isError: true,
     };
   }
@@ -801,7 +939,19 @@ server.tool(
     html_body: z.string().optional().describe('HTML email body. When provided, the email is sent as multipart/alternative with both plain text and HTML versions. Use inline styles on all elements (no <style> blocks) for maximum email client compatibility.'),
     attachments: z.array(z.string()).optional().describe('File names to attach, relative to /workspace/group/files/ (e.g., ["report.docx", "data.xlsx"])'),
   },
-  handleSendEmail,
+  (args) => handleSendEmail(args),
+);
+
+server.tool(
+  'download_attachment',
+  'Download an email attachment to /workspace/group/attachments/. Use get_message first to find attachment IDs.',
+  {
+    identity: z.string().describe('Email identity to use (e.g., "personal", "consulting")'),
+    messageId: z.string().describe('Gmail message ID (from search_messages or get_message)'),
+    attachmentId: z.string().describe('Attachment ID (from get_message output)'),
+    filename: z.string().describe('Filename to save as (from get_message output)'),
+  },
+  handleDownloadAttachment,
 );
 
 server.tool(

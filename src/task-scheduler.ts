@@ -195,8 +195,13 @@ async function runTask(
           try {
             const pendingFile = path.join(groupDir, 'pending-task-context.txt');
             const summary = streamedOutput.result.slice(0, 500);
-            fs.writeFileSync(pendingFile, `[CONTEXT: A scheduled task just sent the following to the user. If the user's next message is a short reply like "Approve", "Yes", "Yes please", it is responding to THIS.]\n${summary}\n[END CONTEXT]`);
-          } catch { /* ignore */ }
+            fs.writeFileSync(
+              pendingFile,
+              `[CONTEXT: A scheduled task just sent the following to the user. If the user's next message is a short reply like "Approve", "Yes", "Yes please", it is responding to THIS.]\n${summary}\n[END CONTEXT]`,
+            );
+          } catch {
+            /* ignore */
+          }
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {

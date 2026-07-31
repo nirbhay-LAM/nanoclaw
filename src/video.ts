@@ -7,8 +7,8 @@ import { promisify } from 'util';
 import { normalizeMessageContent } from '@whiskeysockets/baileys';
 import type { WAMessage } from '@whiskeysockets/baileys';
 
-import { transcribe } from './audio.js';
-import { WHISPER_BIN } from './config.js';
+import { transcribe, transcribeWithDiarization } from './audio.js';
+import { DIARIZE_ENABLED, WHISPER_BIN } from './config.js';
 import { logger } from './logger.js';
 
 const execFile = promisify(execFileCb);
@@ -158,7 +158,9 @@ export async function processVideo(
   let transcript: string | null = null;
   if (WHISPER_BIN) {
     try {
-      transcript = await transcribe(videoPath);
+      transcript = DIARIZE_ENABLED
+        ? await transcribeWithDiarization(videoPath)
+        : await transcribe(videoPath);
       if (transcript) {
         logger.info({ videoDir }, 'Video audio transcribed');
       }

@@ -3,9 +3,21 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  ASSISTANT_NAME,
+  DATA_DIR,
+  GROUPS_DIR,
+  IPC_POLL_INTERVAL,
+  TIMEZONE,
+} from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getMessagesSince,
+  getTaskById,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { getMimeType } from './mime.js';
@@ -41,6 +53,13 @@ export interface IpcDeps {
   statusHeartbeat?: () => void;
   recoverPendingMessages?: () => void;
   transcribeAudio?: (audioPath: string) => Promise<string | null>;
+  generateImage?: (
+    prompt: string,
+    size: string,
+    quality: string,
+    outputPath: string,
+  ) => Promise<string | null>;
+  confirmAction?: (chatJid: string, message: string) => Promise<boolean>;
 }
 
 let ipcWatcherRunning = false;
@@ -265,7 +284,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
       }
 
       // Process requests from this group's IPC directory (request-response pattern)
-      if (deps.transcribeAudio) {
+      {
         const requestsDir = path.join(ipcBaseDir, sourceGroup, 'requests');
         const responsesDir = path.join(ipcBaseDir, sourceGroup, 'responses');
         try {
@@ -322,6 +341,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
         }
       }
     }
+
+    // Check pending action confirmations (non-blocking)
+    await checkPendingConfirmations(deps);
 
     // Status emoji heartbeat — detect dead containers with stale emoji state
     deps.statusHeartbeat?.();
@@ -676,10 +698,21 @@ export async function processTaskIpc(
  * Writes a response file to responsesDir for the container to pick up.
  */
 export async function processRequestIpc(
-  data: { type?: string; requestId?: string; filePath?: string },
+  data: {
+    type?: string;
+    requestId?: string;
+    filePath?: string;
+    prompt?: string;
+    size?: string;
+    quality?: string;
+    outputFilename?: string;
+  },
   sourceGroup: string,
   responsesDir: string,
-  deps: Pick<IpcDeps, 'transcribeAudio'>,
+  deps: Pick<IpcDeps, 'transcribeAudio' | 'generateImage'> &
+    Partial<
+      Pick<IpcDeps, 'confirmAction' | 'sendMessage' | 'registeredGroups'>
+    >,
 ): Promise<void> {
   if (!data.requestId) {
     throw new Error('IPC request missing requestId');
@@ -745,7 +778,192 @@ export async function processRequestIpc(
       { requestId: data.requestId, filePath: data.filePath, sourceGroup },
       'IPC transcription request processed',
     );
+  } else if (
+    data.type === 'generate_image' &&
+    data.prompt &&
+    deps.generateImage
+  ) {
+    const groupDir = path.resolve(GROUPS_DIR, sourceGroup);
+    const filename = data.outputFilename || `generated-${Date.now()}.png`;
+    const outputPath = path.join(groupDir, 'files', filename);
+
+    const result = await deps.generateImage(
+      data.prompt,
+      data.size || '1024x1024',
+      data.quality || 'high',
+      outputPath,
+    );
+
+    if (result) {
+      writeResponse({
+        requestId: data.requestId,
+        status: 'success',
+        result: `files/${filename}`,
+      });
+    } else {
+      writeResponse({
+        requestId: data.requestId,
+        status: 'error',
+        error: 'Image generation failed',
+      });
+    }
+    logger.info(
+      { requestId: data.requestId, sourceGroup },
+      'IPC image generation request processed',
+    );
+  } else if (
+    data.type === 'confirm_action' &&
+    (data as { message?: string }).message &&
+    deps.sendMessage &&
+    deps.registeredGroups
+  ) {
+    const message = (data as { message?: string }).message!;
+    // Find the chat JID for this group
+    const groups = deps.registeredGroups!();
+    let chatJid: string | undefined;
+    for (const [jid, group] of Object.entries(groups)) {
+      if (group.folder === sourceGroup) {
+        chatJid = jid;
+        break;
+      }
+    }
+
+    if (!chatJid) {
+      writeResponse({
+        requestId: data.requestId,
+        status: 'denied',
+        error: 'Could not find chat for confirmation',
+      });
+      return;
+    }
+
+    // Send confirmation request to user via WhatsApp
+    await deps.sendMessage(chatJid, message);
+
+    // Add to pending confirmations — response will be written by checkPendingConfirmations()
+    pendingConfirmations.set(data.requestId!, {
+      chatJid,
+      sourceGroup,
+      responsesDir,
+      requestId: data.requestId!,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() + CONFIRM_TIMEOUT_MS,
+    });
+    logger.info(
+      { requestId: data.requestId, sourceGroup, chatJid },
+      'Confirmation request sent, awaiting user response',
+    );
+    // Do NOT write response here — checkPendingConfirmations handles it
   } else {
     logger.warn({ type: data.type, sourceGroup }, 'Unknown IPC request type');
+  }
+}
+
+// --- Pending confirmation tracking (non-blocking) ---
+
+const CONFIRM_TIMEOUT_MS = 120_000;
+const APPROVE_KEYWORDS = new Set(['SEND', 'YES', 'APPROVE', 'GO AHEAD']);
+const DENY_KEYWORDS = new Set(['CANCEL', 'NO', 'STOP', 'ABORT']);
+
+export interface PendingConfirmation {
+  chatJid: string;
+  sourceGroup: string;
+  responsesDir: string;
+  requestId: string;
+  sentTimestamp: string;
+  expireAt: number;
+}
+
+export const pendingConfirmations = new Map<string, PendingConfirmation>();
+
+/**
+ * Check pending action confirmations for user responses.
+ * Called each IPC cycle (non-blocking). Writes response files when
+ * user approves/denies or when the confirmation times out.
+ */
+export async function checkPendingConfirmations(
+  deps: Pick<IpcDeps, 'sendMessage'>,
+): Promise<void> {
+  for (const [id, pending] of pendingConfirmations) {
+    // Check for timeout first
+    if (Date.now() > pending.expireAt) {
+      const responsePath = path.join(
+        pending.responsesDir,
+        `${pending.requestId}.json`,
+      );
+      const tempPath = `${responsePath}.tmp`;
+      fs.writeFileSync(
+        tempPath,
+        JSON.stringify({
+          requestId: pending.requestId,
+          status: 'denied',
+          error: 'Confirmation timed out. Email not sent.',
+        }),
+      );
+      fs.renameSync(tempPath, responsePath);
+      await deps.sendMessage(
+        pending.chatJid,
+        'Email send timed out (no confirmation received). Email was NOT sent.',
+      );
+      logger.warn(
+        { requestId: id, sourceGroup: pending.sourceGroup },
+        'Action confirmation timed out',
+      );
+      pendingConfirmations.delete(id);
+      continue;
+    }
+
+    // Check for user response
+    const recentMessages = getMessagesSince(
+      pending.chatJid,
+      pending.sentTimestamp,
+      ASSISTANT_NAME,
+    );
+
+    for (const msg of recentMessages) {
+      const text = msg.content.trim().toUpperCase();
+
+      if (APPROVE_KEYWORDS.has(text)) {
+        const responsePath = path.join(
+          pending.responsesDir,
+          `${pending.requestId}.json`,
+        );
+        const tempPath = `${responsePath}.tmp`;
+        fs.writeFileSync(
+          tempPath,
+          JSON.stringify({ requestId: pending.requestId, status: 'approved' }),
+        );
+        fs.renameSync(tempPath, responsePath);
+        logger.info(
+          { requestId: id, sourceGroup: pending.sourceGroup },
+          'Action confirmed by user',
+        );
+        pendingConfirmations.delete(id);
+        break;
+      }
+
+      if (DENY_KEYWORDS.has(text)) {
+        const responsePath = path.join(
+          pending.responsesDir,
+          `${pending.requestId}.json`,
+        );
+        const tempPath = `${responsePath}.tmp`;
+        fs.writeFileSync(
+          tempPath,
+          JSON.stringify({
+            requestId: pending.requestId,
+            status: 'denied',
+            error: 'Cancelled by user',
+          }),
+        );
+        fs.renameSync(tempPath, responsePath);
+        logger.info(
+          { requestId: id, sourceGroup: pending.sourceGroup },
+          'Action cancelled by user',
+        );
+        pendingConfirmations.delete(id);
+        break;
+      }
+    }
   }
 }

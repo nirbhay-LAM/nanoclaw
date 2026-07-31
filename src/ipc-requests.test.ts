@@ -3,15 +3,40 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { processRequestIpc } from './ipc.js';
+import {
+  processRequestIpc,
+  pendingConfirmations,
+  checkPendingConfirmations,
+} from './ipc.js';
 
-// Override GROUPS_DIR used by processRequestIpc
+// Override config used by processRequestIpc
 vi.mock('./config.js', () => ({
+  ASSISTANT_NAME: 'RSK',
   DATA_DIR: '',
   GROUPS_DIR: '',
   IPC_POLL_INTERVAL: 50,
   TIMEZONE: 'America/Chicago',
 }));
+
+// Mock getMessagesSince for confirmation tests
+vi.mock('./db.js', () => ({
+  createTask: vi.fn(),
+  deleteTask: vi.fn(),
+  getTaskById: vi.fn(),
+  updateTask: vi.fn(),
+  getMessagesSince: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock('./logger.js', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+import { getMessagesSince } from './db.js';
 
 import * as config from './config.js';
 
@@ -170,5 +195,232 @@ describe('processRequestIpc: transcribe_audio', () => {
     expect(
       fs.existsSync(path.join(responsesDir, `${requestId}.json.tmp`)),
     ).toBe(false);
+  });
+});
+
+describe('processRequestIpc: confirm_action', () => {
+  afterEach(() => {
+    pendingConfirmations.clear();
+  });
+
+  it('sends WhatsApp preview and adds to pending map', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const registeredGroups = vi.fn(() => ({
+      'test@g.us': { folder: 'whatsapp_main', isMain: true },
+    }));
+    const requestId = 'req-confirm-1';
+
+    await processRequestIpc(
+      {
+        type: 'confirm_action',
+        requestId,
+        message: 'Confirm this email?',
+      } as Parameters<typeof processRequestIpc>[0],
+      'whatsapp_main',
+      responsesDir,
+      { transcribeAudio: undefined, sendMessage, registeredGroups } as any,
+    );
+
+    // Should send WhatsApp message
+    expect(sendMessage).toHaveBeenCalledWith(
+      'test@g.us',
+      'Confirm this email?',
+    );
+    // Should add to pending map, NOT write response
+    expect(pendingConfirmations.has(requestId)).toBe(true);
+    expect(fs.existsSync(path.join(responsesDir, `${requestId}.json`))).toBe(
+      false,
+    );
+  });
+
+  it('denies when no registered group found', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const registeredGroups = vi.fn(() => ({}));
+    const requestId = 'req-confirm-nogroup';
+
+    await processRequestIpc(
+      {
+        type: 'confirm_action',
+        requestId,
+        message: 'Confirm?',
+      } as Parameters<typeof processRequestIpc>[0],
+      'unknown_group',
+      responsesDir,
+      { transcribeAudio: undefined, sendMessage, registeredGroups } as any,
+    );
+
+    const response = readResponse(requestId);
+    expect(response.status).toBe('denied');
+    expect(response.error).toContain('Could not find chat');
+    expect(pendingConfirmations.has(requestId)).toBe(false);
+  });
+});
+
+describe('checkPendingConfirmations', () => {
+  afterEach(() => {
+    pendingConfirmations.clear();
+    vi.mocked(getMessagesSince).mockReturnValue([]);
+  });
+
+  it('approves on SEND response', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const requestId = 'req-approve-1';
+
+    pendingConfirmations.set(requestId, {
+      chatJid: 'test@g.us',
+      sourceGroup: 'whatsapp_main',
+      responsesDir,
+      requestId,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() + 120_000,
+    });
+
+    vi.mocked(getMessagesSince).mockReturnValue([
+      { content: 'SEND', is_bot_message: false } as any,
+    ]);
+
+    await checkPendingConfirmations({ sendMessage });
+
+    const response = readResponse(requestId);
+    expect(response.status).toBe('approved');
+    expect(pendingConfirmations.has(requestId)).toBe(false);
+  });
+
+  it('approves on YES response (case-insensitive)', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const requestId = 'req-approve-yes';
+
+    pendingConfirmations.set(requestId, {
+      chatJid: 'test@g.us',
+      sourceGroup: 'whatsapp_main',
+      responsesDir,
+      requestId,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() + 120_000,
+    });
+
+    vi.mocked(getMessagesSince).mockReturnValue([
+      { content: 'yes', is_bot_message: false } as any,
+    ]);
+
+    await checkPendingConfirmations({ sendMessage });
+
+    const response = readResponse(requestId);
+    expect(response.status).toBe('approved');
+  });
+
+  it('denies on CANCEL response', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const requestId = 'req-deny-1';
+
+    pendingConfirmations.set(requestId, {
+      chatJid: 'test@g.us',
+      sourceGroup: 'whatsapp_main',
+      responsesDir,
+      requestId,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() + 120_000,
+    });
+
+    vi.mocked(getMessagesSince).mockReturnValue([
+      { content: 'CANCEL', is_bot_message: false } as any,
+    ]);
+
+    await checkPendingConfirmations({ sendMessage });
+
+    const response = readResponse(requestId);
+    expect(response.status).toBe('denied');
+    expect(response.error).toContain('Cancelled by user');
+    expect(pendingConfirmations.has(requestId)).toBe(false);
+  });
+
+  it('denies on timeout and notifies user', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const requestId = 'req-timeout-1';
+
+    pendingConfirmations.set(requestId, {
+      chatJid: 'test@g.us',
+      sourceGroup: 'whatsapp_main',
+      responsesDir,
+      requestId,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() - 1000, // Already expired
+    });
+
+    await checkPendingConfirmations({ sendMessage });
+
+    const response = readResponse(requestId);
+    expect(response.status).toBe('denied');
+    expect(response.error).toContain('timed out');
+    expect(pendingConfirmations.has(requestId)).toBe(false);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'test@g.us',
+      expect.stringContaining('timed out'),
+    );
+  });
+
+  it('ignores unrelated messages', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const requestId = 'req-ignore-1';
+
+    pendingConfirmations.set(requestId, {
+      chatJid: 'test@g.us',
+      sourceGroup: 'whatsapp_main',
+      responsesDir,
+      requestId,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() + 120_000,
+    });
+
+    vi.mocked(getMessagesSince).mockReturnValue([
+      { content: 'What time is the meeting?', is_bot_message: false } as any,
+    ]);
+
+    await checkPendingConfirmations({ sendMessage });
+
+    // Should still be pending
+    expect(pendingConfirmations.has(requestId)).toBe(true);
+    expect(fs.existsSync(path.join(responsesDir, `${requestId}.json`))).toBe(
+      false,
+    );
+  });
+
+  it('handles concurrent confirmations independently', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const req1 = 'req-concurrent-1';
+    const req2 = 'req-concurrent-2';
+
+    pendingConfirmations.set(req1, {
+      chatJid: 'test@g.us',
+      sourceGroup: 'whatsapp_main',
+      responsesDir,
+      requestId: req1,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() + 120_000,
+    });
+    pendingConfirmations.set(req2, {
+      chatJid: 'other@g.us',
+      sourceGroup: 'other_group',
+      responsesDir,
+      requestId: req2,
+      sentTimestamp: new Date().toISOString(),
+      expireAt: Date.now() + 120_000,
+    });
+
+    // Only first group gets SEND
+    vi.mocked(getMessagesSince).mockImplementation((chatJid: string) => {
+      if (chatJid === 'test@g.us') {
+        return [{ content: 'SEND', is_bot_message: false }] as any;
+      }
+      return [];
+    });
+
+    await checkPendingConfirmations({ sendMessage });
+
+    // First approved, second still pending
+    const response1 = readResponse(req1);
+    expect(response1.status).toBe('approved');
+    expect(pendingConfirmations.has(req1)).toBe(false);
+    expect(pendingConfirmations.has(req2)).toBe(true);
   });
 });

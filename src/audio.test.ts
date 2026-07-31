@@ -10,6 +10,11 @@ vi.mock('child_process', () => ({
 vi.mock('./config.js', () => ({
   WHISPER_BIN: '/opt/homebrew/bin/whisper-cli',
   WHISPER_MODEL: '/tmp/test-model.bin',
+  DIARIZE_ENABLED: false,
+  DIARIZE_BIN: '/tmp/test-venv/bin/python',
+  DIARIZE_SCRIPT: '/tmp/scripts/diarize.py',
+  DIARIZE_MIN_DURATION: 60,
+  DIARIZE_TIMEOUT: 300_000,
 }));
 vi.mock('./logger.js', () => ({
   logger: {
@@ -20,7 +25,18 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import { isVoiceMessage, processAudio, parseAudioReferences } from './audio.js';
+import {
+  isVoiceMessage,
+  processAudio,
+  parseAudioReferences,
+  parseWhisperTimestamp,
+  formatTime,
+  alignDiarization,
+  transcribeWithTimestamps,
+  diarize,
+  transcribeWithDiarization,
+} from './audio.js';
+import type { TimestampedSegment, DiarizedSegment } from './audio.js';
 
 // Helper to mock execFile as a callback-based function
 function mockExecFile(...results: Array<{ stdout?: string; error?: Error }>) {
@@ -219,6 +235,227 @@ describe('audio processing', () => {
     it('returns empty array when no audio', () => {
       const messages = [{ content: 'just text' }];
       expect(parseAudioReferences(messages)).toEqual([]);
+    });
+  });
+
+  describe('parseWhisperTimestamp', () => {
+    it('parses HH:MM:SS.mmm format', () => {
+      expect(parseWhisperTimestamp('00:00:05.000')).toBe(5);
+      expect(parseWhisperTimestamp('00:01:30.500')).toBe(90.5);
+      expect(parseWhisperTimestamp('01:05:00.000')).toBe(3900);
+    });
+
+    it('returns 0 for invalid format', () => {
+      expect(parseWhisperTimestamp('invalid')).toBe(0);
+      expect(parseWhisperTimestamp('')).toBe(0);
+    });
+  });
+
+  describe('formatTime', () => {
+    it('formats seconds as M:SS', () => {
+      expect(formatTime(0)).toBe('0:00');
+      expect(formatTime(5)).toBe('0:05');
+      expect(formatTime(65)).toBe('1:05');
+      expect(formatTime(600)).toBe('10:00');
+    });
+
+    it('formats with hours when needed', () => {
+      expect(formatTime(3661)).toBe('1:01:01');
+      expect(formatTime(7200)).toBe('2:00:00');
+    });
+  });
+
+  describe('alignDiarization', () => {
+    it('aligns single speaker correctly', () => {
+      const whisper: TimestampedSegment[] = [
+        { start: 0, end: 5, text: 'Hello world' },
+        { start: 5, end: 10, text: 'How are you' },
+      ];
+      const speakers: DiarizedSegment[] = [
+        { speaker: 'SPEAKER_00', start: 0, end: 10 },
+      ];
+      const result = alignDiarization(whisper, speakers);
+      expect(result).toBe('Speaker 1 [0:00-0:10]: Hello world How are you');
+    });
+
+    it('aligns multi-speaker with clear boundaries', () => {
+      const whisper: TimestampedSegment[] = [
+        { start: 0, end: 5, text: 'I have a question.' },
+        { start: 5, end: 10, text: 'Sure, go ahead.' },
+        { start: 10, end: 15, text: 'What about the rate?' },
+      ];
+      const speakers: DiarizedSegment[] = [
+        { speaker: 'SPEAKER_00', start: 0, end: 5 },
+        { speaker: 'SPEAKER_01', start: 5, end: 10 },
+        { speaker: 'SPEAKER_00', start: 10, end: 15 },
+      ];
+      const result = alignDiarization(whisper, speakers);
+      expect(result).toContain('Speaker 1');
+      expect(result).toContain('Speaker 2');
+      expect(result).toContain('I have a question.');
+      expect(result).toContain('Sure, go ahead.');
+      expect(result).toContain('What about the rate?');
+      // Should have 3 lines (speaker changes)
+      expect(result.split('\n')).toHaveLength(3);
+    });
+
+    it('merges consecutive same-speaker segments', () => {
+      const whisper: TimestampedSegment[] = [
+        { start: 0, end: 3, text: 'Part one.' },
+        { start: 3, end: 6, text: 'Part two.' },
+        { start: 6, end: 9, text: 'Part three.' },
+      ];
+      const speakers: DiarizedSegment[] = [
+        { speaker: 'SPEAKER_00', start: 0, end: 9 },
+      ];
+      const result = alignDiarization(whisper, speakers);
+      expect(result).toBe(
+        'Speaker 1 [0:00-0:09]: Part one. Part two. Part three.',
+      );
+    });
+
+    it('returns flat text when no diarization segments', () => {
+      const whisper: TimestampedSegment[] = [
+        { start: 0, end: 5, text: 'Hello' },
+        { start: 5, end: 10, text: 'World' },
+      ];
+      const result = alignDiarization(whisper, []);
+      expect(result).toBe('Hello World');
+    });
+
+    it('returns empty string when no whisper segments', () => {
+      const speakers: DiarizedSegment[] = [
+        { speaker: 'SPEAKER_00', start: 0, end: 10 },
+      ];
+      expect(alignDiarization([], speakers)).toBe('');
+    });
+
+    it('labels speakers in order of appearance', () => {
+      const whisper: TimestampedSegment[] = [
+        { start: 0, end: 5, text: 'First.' },
+        { start: 5, end: 10, text: 'Second.' },
+      ];
+      const speakers: DiarizedSegment[] = [
+        { speaker: 'SPEAKER_02', start: 0, end: 5 },
+        { speaker: 'SPEAKER_00', start: 5, end: 10 },
+      ];
+      const result = alignDiarization(whisper, speakers);
+      // SPEAKER_02 appears first, gets "Speaker 1"
+      expect(result).toContain('Speaker 1');
+      expect(result).toContain('Speaker 2');
+      expect(result.split('\n')[0]).toContain('Speaker 1');
+      expect(result.split('\n')[0]).toContain('First.');
+    });
+  });
+
+  describe('transcribeWithTimestamps', () => {
+    it('parses whisper JSON output', async () => {
+      const whisperJson = JSON.stringify({
+        transcription: [
+          {
+            timestamps: { from: '00:00:00.000', to: '00:00:05.000' },
+            text: ' Hello there.',
+          },
+          {
+            timestamps: { from: '00:00:05.000', to: '00:00:10.000' },
+            text: ' How are you?',
+          },
+        ],
+      });
+      // whisper-cli writes JSON to file
+      vi.mocked(fs.readFileSync).mockReturnValueOnce(whisperJson);
+      mockExecFile({ stdout: '' }); // whisper-cli run
+
+      const result = await transcribeWithTimestamps('/tmp/test.wav');
+
+      expect(result).toEqual([
+        { start: 0, end: 5, text: 'Hello there.' },
+        { start: 5, end: 10, text: 'How are you?' },
+      ]);
+    });
+
+    it('returns null on whisper failure', async () => {
+      mockExecFile({ error: new Error('whisper failed') });
+
+      const result = await transcribeWithTimestamps('/tmp/test.wav');
+      expect(result).toBeNull();
+    });
+
+    it('returns null on empty transcription', async () => {
+      vi.mocked(fs.readFileSync).mockReturnValueOnce(
+        JSON.stringify({ transcription: [] }),
+      );
+      mockExecFile({ stdout: '' });
+
+      const result = await transcribeWithTimestamps('/tmp/test.wav');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('diarize', () => {
+    it('parses diarization script output', async () => {
+      const diarizeOutput = JSON.stringify({
+        segments: [
+          { speaker: 'SPEAKER_00', start: 0.0, end: 45.3 },
+          { speaker: 'SPEAKER_01', start: 45.3, end: 80.1 },
+        ],
+      });
+      mockExecFile({ stdout: diarizeOutput });
+
+      const result = await diarize('/tmp/test.wav');
+
+      expect(result).toEqual([
+        { speaker: 'SPEAKER_00', start: 0.0, end: 45.3 },
+        { speaker: 'SPEAKER_01', start: 45.3, end: 80.1 },
+      ]);
+    });
+
+    it('returns null on script failure', async () => {
+      mockExecFile({ error: new Error('script not found') });
+
+      const result = await diarize('/tmp/test.wav');
+      expect(result).toBeNull();
+    });
+
+    it('returns null on malformed JSON', async () => {
+      mockExecFile({ stdout: 'not json' });
+
+      const result = await diarize('/tmp/test.wav');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when segments is not an array', async () => {
+      mockExecFile({ stdout: JSON.stringify({ segments: 'invalid' }) });
+
+      const result = await diarize('/tmp/test.wav');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('transcribeWithDiarization', () => {
+    it('returns flat transcript when audio is too short', async () => {
+      // ffmpeg conversion
+      mockExecFile(
+        { stdout: '' },
+        // ffprobe duration
+        {
+          stdout: JSON.stringify({
+            format: { duration: '30' },
+          }),
+        },
+        // flat whisper
+        { stdout: 'Short audio content' },
+      );
+
+      const result = await transcribeWithDiarization('/tmp/short.ogg');
+      expect(result).toBe('Short audio content');
+    });
+
+    it('returns null when ffmpeg fails', async () => {
+      mockExecFile({ error: new Error('ffmpeg failed') });
+
+      const result = await transcribeWithDiarization('/tmp/test.ogg');
+      expect(result).toBeNull();
     });
   });
 });

@@ -6,6 +6,10 @@ const MIME_MAP: Record<string, string> = {
   '.pptx':
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.doc': 'application/msword',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.xls': 'application/vnd.ms-excel',
+  '.rtf': 'application/rtf',
   '.pdf': 'application/pdf',
   '.csv': 'text/csv',
   '.txt': 'text/plain',
@@ -41,6 +45,10 @@ export const DOCUMENT_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
   'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/msword', // .doc
+  'application/vnd.ms-powerpoint', // .ppt
+  'application/vnd.ms-excel', // .xls
+  'application/rtf', // .rtf
   'text/csv',
   'text/plain',
   'application/json',

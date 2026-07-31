@@ -1119,6 +1119,163 @@ describe('WhatsAppChannel', () => {
     });
   });
 
+  // --- Audio message handling (forwarded / non-voice-note) ---
+
+  describe('audio message handling', () => {
+    it('transcribes forwarded audio messages via processAudio', async () => {
+      const audioBuffer = Buffer.from('fake-ogg-data');
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(audioBuffer);
+      vi.mocked(processAudio).mockResolvedValueOnce({
+        content:
+          '[Audio: attachments/audio-12345.ogg (25KB)]\nTranscript: forwarded clip',
+        relativePath: 'attachments/audio-12345.ogg',
+      });
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-fwd-audio-1',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: false },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(downloadMediaMessage).toHaveBeenCalled();
+      expect(processAudio).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.stringContaining('test-group'),
+        false,
+        expect.stringMatching(/^audio-\d+\.ogg$/),
+      );
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('[Audio: attachments/audio-'),
+        }),
+      );
+    });
+
+    it('handles audio message download failure gracefully', async () => {
+      vi.mocked(downloadMediaMessage).mockRejectedValueOnce(
+        new Error('network'),
+      );
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      vi.mocked(processAudio).mockClear();
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-fwd-audio-2',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: false },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(processAudio).not.toHaveBeenCalled();
+      // No content extracted, message skipped by !content guard
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('skips message when processAudio returns null', async () => {
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(
+        Buffer.from('data'),
+      );
+      vi.mocked(processAudio).mockResolvedValueOnce(null);
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-fwd-audio-3',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: false },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      expect(processAudio).toHaveBeenCalled();
+      // Content stays empty, message skipped by !content guard
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not double-process voice notes as audio messages', async () => {
+      vi.mocked(isVoiceMessage).mockReturnValue(true);
+      vi.mocked(downloadMediaMessage).mockResolvedValueOnce(
+        Buffer.from('data'),
+      );
+      vi.mocked(processAudio).mockResolvedValueOnce({
+        content: '[Voice Note: test]',
+        relativePath: 'attachments/voice-123.ogg',
+      });
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      vi.mocked(processAudio).mockClear();
+      vi.mocked(processAudio).mockResolvedValueOnce({
+        content: '[Voice Note: test]',
+        relativePath: 'attachments/voice-123.ogg',
+      });
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-fwd-audio-4',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true },
+          },
+          pushName: 'Nirbhay',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      // processAudio called exactly once (by voice note handler, not audio message handler)
+      expect(processAudio).toHaveBeenCalledTimes(1);
+      // Voice note handler passes isVoiceNote=true
+      expect(processAudio).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.any(String),
+        true,
+      );
+
+      vi.mocked(isVoiceMessage).mockReturnValue(false);
+    });
+  });
+
   // --- LID ↔ JID translation ---
 
   describe('LID to JID translation', () => {

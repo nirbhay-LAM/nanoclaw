@@ -8,6 +8,7 @@ import {
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  DIARIZE_ENABLED,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TIMEZONE,
@@ -51,7 +52,8 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { transcribe } from './audio.js';
+import { transcribe, transcribeWithDiarization } from './audio.js';
+import { generateImage } from './openai-image.js';
 import { redactSecrets } from './redact.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
@@ -274,7 +276,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const pendingContext = fs.readFileSync(pendingContextFile, 'utf-8');
       prompt = `${pendingContext}\n\n${prompt}`;
       fs.unlinkSync(pendingContextFile); // Consume once
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   const imageAttachments = parseImageReferences(missedMessages);
@@ -321,12 +325,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Check for checkpoint recovery — if a previous session was interrupted
   // mid-task, prepend resume instructions so the agent continues from where
   // it left off instead of re-doing completed work.
-  const checkpointPath = path.join(resolveGroupFolderPath(group.folder), 'checkpoint.json');
+  const checkpointPath = path.join(
+    resolveGroupFolderPath(group.folder),
+    'checkpoint.json',
+  );
   if (fs.existsSync(checkpointPath)) {
     try {
-      const checkpoint = JSON.parse(
-        fs.readFileSync(checkpointPath, 'utf8'),
-      );
+      const checkpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
       const completed = Array.isArray(checkpoint.completedSteps)
         ? checkpoint.completedSteps.length
         : 0;
@@ -995,7 +1000,8 @@ async function main(): Promise<void> {
     },
     statusHeartbeat: () => statusTracker.heartbeatCheck(),
     recoverPendingMessages,
-    transcribeAudio: transcribe,
+    transcribeAudio: DIARIZE_ENABLED ? transcribeWithDiarization : transcribe,
+    generateImage,
   });
   // Recover status tracker AFTER channels connect, so recovery reactions
   // can actually be sent via the WhatsApp channel.

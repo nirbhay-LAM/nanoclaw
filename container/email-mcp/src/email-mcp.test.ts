@@ -22,6 +22,7 @@ vi.mock('fs', async () => {
 const mockGmailSend = vi.fn();
 const mockGmailList = vi.fn();
 const mockGmailGet = vi.fn();
+const mockGmailAttachmentGet = vi.fn();
 const mockDriveFilesList = vi.fn();
 const mockDriveFilesGet = vi.fn();
 const mockDriveFilesCreate = vi.fn();
@@ -40,6 +41,9 @@ vi.mock('googleapis', () => {
             send: mockGmailSend,
             list: mockGmailList,
             get: mockGmailGet,
+            attachments: {
+              get: mockGmailAttachmentGet,
+            },
           },
         },
       })),
@@ -67,6 +71,8 @@ import {
   getVersionsFolder,
   handleListIdentities,
   handleSendEmail,
+  handleDownloadAttachment,
+  ConfirmFn,
   handleSearchMessages,
   handleGetMessage,
   handleListDriveFiles,
@@ -78,6 +84,10 @@ import {
   CREDS_BASE,
   type EmailConfig,
 } from './email-mcp.js';
+
+// --- Confirmation mock ---
+const autoApprove: ConfirmFn = async () => ({ approved: true });
+const autoDeny: ConfirmFn = async () => ({ approved: false, error: 'Denied by user' });
 
 // --- Test fixtures ---
 
@@ -511,7 +521,7 @@ describe('handleSendEmail', () => {
       to: 'recipient@test.com',
       subject: 'Test',
       body: 'Hello',
-    });
+    }, autoApprove);
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('Email sent');
@@ -527,7 +537,7 @@ describe('handleSendEmail', () => {
       to: 'r@t.com',
       subject: 'Test',
       body: 'Hello',
-    });
+    }, autoApprove);
 
     expect(result.content[0].text).toContain('alias@biz.com');
   });
@@ -542,7 +552,7 @@ describe('handleSendEmail', () => {
       subject: 'HTML Test',
       body: 'Plain text fallback',
       html_body: '<h1>Report</h1>',
-    });
+    }, autoApprove);
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('Email sent');
@@ -560,7 +570,7 @@ describe('handleSendEmail', () => {
       to: 'r@t.com',
       subject: 'Test',
       body: 'Hello',
-    });
+    }, autoApprove);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Unknown identity');
   });
@@ -586,7 +596,7 @@ describe('handleSendEmail', () => {
       subject: 'Test',
       body: 'Hello',
       attachments: ['missing.docx'],
-    });
+    }, autoApprove);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Attachment not found');
   });
@@ -600,9 +610,150 @@ describe('handleSendEmail', () => {
       to: 'r@t.com',
       subject: 'Test',
       body: 'Hello',
-    });
+    }, autoApprove);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('API quota exceeded');
+  });
+
+  it('does not send email when confirmation is denied', async () => {
+    mockOAuthFiles();
+    mockGmailSend.mockResolvedValue({});
+
+    const result = await handleSendEmail({
+      identity: 'personal',
+      to: 'r@t.com',
+      subject: 'Test',
+      body: 'Hello',
+    }, autoDeny);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Denied by user');
+    expect(mockGmailSend).not.toHaveBeenCalled();
+  });
+
+  it('does not send email when confirmation times out', async () => {
+    mockOAuthFiles();
+    mockGmailSend.mockResolvedValue({});
+
+    const timeoutConfirm: ConfirmFn = async () => ({
+      approved: false,
+      error: 'Confirmation timed out. Email not sent.',
+    });
+
+    const result = await handleSendEmail({
+      identity: 'personal',
+      to: 'r@t.com',
+      subject: 'Test',
+      body: 'Hello',
+    }, timeoutConfirm);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('timed out');
+    expect(mockGmailSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleDownloadAttachment', () => {
+  it('downloads and saves attachment successfully', async () => {
+    mockOAuthFiles();
+    const testContent = 'Hello world PDF content';
+    const b64url = Buffer.from(testContent).toString('base64url');
+    mockGmailAttachmentGet.mockResolvedValue({
+      data: { data: b64url, size: testContent.length },
+    });
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const s = String(p);
+      if (s.includes('email-identities.json')) return true;
+      if (s.includes('gcp-oauth.keys.json')) return true;
+      if (s.includes('credentials.json')) return true;
+      return false; // attachment file does not exist yet
+    });
+
+    const result = await handleDownloadAttachment({
+      identity: 'personal',
+      messageId: 'msg123',
+      attachmentId: 'att456',
+      filename: 'report.pdf',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('report.pdf');
+    expect(result.content[0].text).toContain('KB');
+    expect(mockGmailAttachmentGet).toHaveBeenCalledWith({
+      userId: 'me',
+      messageId: 'msg123',
+      id: 'att456',
+    });
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('report.pdf'),
+      expect.any(Buffer),
+    );
+  });
+
+  it('prepends timestamp when file already exists', async () => {
+    mockOAuthFiles();
+    mockGmailAttachmentGet.mockResolvedValue({
+      data: { data: Buffer.from('data').toString('base64url'), size: 4 },
+    });
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const s = String(p);
+      if (s.includes('email-identities.json')) return true;
+      if (s.includes('gcp-oauth.keys.json')) return true;
+      if (s.includes('credentials.json')) return true;
+      if (s.includes('report.pdf')) return true; // file already exists
+      return false;
+    });
+
+    const result = await handleDownloadAttachment({
+      identity: 'personal',
+      messageId: 'msg123',
+      attachmentId: 'att456',
+      filename: 'report.pdf',
+    });
+
+    expect(result.isError).toBeUndefined();
+    // Filename should have timestamp prefix
+    expect(result.content[0].text).toMatch(/\d+-report\.pdf/);
+  });
+
+  it('returns error for unknown identity', async () => {
+    mockOAuthFiles();
+    const result = await handleDownloadAttachment({
+      identity: 'nonexistent',
+      messageId: 'msg123',
+      attachmentId: 'att456',
+      filename: 'report.pdf',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Unknown identity');
+  });
+
+  it('returns error when Gmail API fails', async () => {
+    mockOAuthFiles();
+    mockGmailAttachmentGet.mockRejectedValue(new Error('Not found'));
+
+    const result = await handleDownloadAttachment({
+      identity: 'personal',
+      messageId: 'msg123',
+      attachmentId: 'att456',
+      filename: 'report.pdf',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Not found');
+  });
+
+  it('returns error when attachment data is empty', async () => {
+    mockOAuthFiles();
+    mockGmailAttachmentGet.mockResolvedValue({ data: { data: null } });
+
+    const result = await handleDownloadAttachment({
+      identity: 'personal',
+      messageId: 'msg123',
+      attachmentId: 'att456',
+      filename: 'report.pdf',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('empty');
   });
 });
 

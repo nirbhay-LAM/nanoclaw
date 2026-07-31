@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getMimeType } from './mime.js';
+import { getMimeType, isDocumentMime } from './mime.js';
 
 describe('getMimeType', () => {
   it('returns correct MIME for Office formats', () => {
@@ -12,6 +12,13 @@ describe('getMimeType', () => {
     expect(getMimeType('data.xlsx')).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
+  });
+
+  it('returns correct MIME for legacy Office formats', () => {
+    expect(getMimeType('letter.doc')).toBe('application/msword');
+    expect(getMimeType('deck.ppt')).toBe('application/vnd.ms-powerpoint');
+    expect(getMimeType('budget.xls')).toBe('application/vnd.ms-excel');
+    expect(getMimeType('memo.rtf')).toBe('application/rtf');
   });
 
   it('returns correct MIME for common types', () => {
@@ -28,11 +35,19 @@ describe('getMimeType', () => {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
     expect(getMimeType('data.CSV')).toBe('text/csv');
+    expect(getMimeType('LETTER.DOC')).toBe('application/msword');
   });
 
   it('returns application/octet-stream for unknown extensions', () => {
     expect(getMimeType('file.xyz')).toBe('application/octet-stream');
     expect(getMimeType('archive.tar.gz')).toBe('application/octet-stream');
+  });
+
+  it('recognizes legacy Office MIME types as documents', () => {
+    expect(isDocumentMime('application/msword')).toBe(true);
+    expect(isDocumentMime('application/vnd.ms-powerpoint')).toBe(true);
+    expect(isDocumentMime('application/vnd.ms-excel')).toBe(true);
+    expect(isDocumentMime('application/rtf')).toBe(true);
   });
 
   it('handles files with paths', () => {

@@ -67,7 +67,20 @@ export const WHISPER_BIN =
   process.env.WHISPER_BIN || '/opt/homebrew/bin/whisper-cli';
 export const WHISPER_MODEL =
   process.env.WHISPER_MODEL ||
-  path.resolve(PROJECT_ROOT, 'data/models/ggml-base.en.bin');
+  path.resolve(PROJECT_ROOT, 'data/models/ggml-base.bin');
+
+// Speaker diarization (pyannote-audio)
+export const DIARIZE_ENABLED =
+  (process.env.DIARIZE_ENABLED || 'false') === 'true';
+export const DIARIZE_BIN =
+  process.env.DIARIZE_BIN ||
+  path.resolve(PROJECT_ROOT, 'data/diarize-venv/bin/python');
+export const DIARIZE_SCRIPT = path.resolve(PROJECT_ROOT, 'scripts/diarize.py');
+export const DIARIZE_MIN_DURATION = parseInt(
+  process.env.DIARIZE_MIN_DURATION || '60',
+  10,
+);
+export const DIARIZE_TIMEOUT = 300_000; // 5 minutes
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
