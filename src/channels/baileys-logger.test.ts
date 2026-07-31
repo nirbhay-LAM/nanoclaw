@@ -21,15 +21,15 @@ describe('isHandledBaileysWarning', () => {
   });
 
   it('matches when the text is part of a longer message', () => {
-    expect(isHandledBaileysWarning('warn: timed out waiting for message!')).toBe(
-      true,
-    );
+    expect(
+      isHandledBaileysWarning('warn: timed out waiting for message!'),
+    ).toBe(true);
   });
 
   it('does not match unrelated warnings', () => {
-    expect(isHandledBaileysWarning('LIDs are not supported with onWhatsApp')).toBe(
-      false,
-    );
+    expect(
+      isHandledBaileysWarning('LIDs are not supported with onWhatsApp'),
+    ).toBe(false);
     expect(isHandledBaileysWarning('Connection Closed')).toBe(false);
   });
 
@@ -48,7 +48,10 @@ describe('wrapBaileysLogger', () => {
 
   it('demotes the handled timeout to debug, in warn(obj, msg) form', () => {
     // How Baileys actually calls it: logger.warn({ msgId }, 'timed out ...')
-    wrapBaileysLogger(base).warn({ msgId: '3465.44324-4' }, 'timed out waiting for message');
+    wrapBaileysLogger(base).warn(
+      { msgId: '3465.44324-4' },
+      'timed out waiting for message',
+    );
     expect(base.warn).not.toHaveBeenCalled();
     expect(base.debug).toHaveBeenCalledWith(
       { msgId: '3465.44324-4' },
