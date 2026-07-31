@@ -30,6 +30,7 @@ import { isVoiceMessage, processAudio } from '../audio.js';
 import { isImageMessage, processImage } from '../image.js';
 import { isVideoMessage, processVideo } from '../video.js';
 import { logger } from '../logger.js';
+import { wrapBaileysLogger } from './baileys-logger.js';
 import { isAudioMime, isDocumentMime } from '../mime.js';
 
 /** Runtime type guard for downloadMediaMessage result when called with 'buffer'. */
@@ -94,14 +95,16 @@ export class WhatsAppChannel implements Channel {
       );
       return { version: undefined };
     });
+    // Baileys logs warnings for timeouts it handles itself; see baileys-logger.
+    const waLogger = wrapBaileysLogger(logger);
     this.sock = makeWASocket({
       version,
       auth: {
         creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger),
+        keys: makeCacheableSignalKeyStore(state.keys, waLogger),
       },
       printQRInTerminal: false,
-      logger,
+      logger: waLogger,
       browser: Browsers.macOS('Chrome'),
       // We consume live events only — messages.upsert and messages.reaction —
       // and never register a messaging-history.set handler, so the initial
