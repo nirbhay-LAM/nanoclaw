@@ -436,8 +436,14 @@ async function runQuery(
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       model: 'claude-opus-5',
-      maxThinkingTokens: 250000,
-      betas: ['context-1m-2025-08-07'],
+      // No maxThinkingTokens: that is the fixed thinking-budget concept, which
+      // Opus 5 removes — thinking is on by default and depth is set by effort.
+      // Carrying the old 250k budget over from the Opus 4.6 config reserved a
+      // huge slice of the window for thinking and left too little for input,
+      // which is what produced "Prompt is too long".
+      //
+      // No context-1m beta either: Opus 5 has a 1M window as both the default
+      // and the maximum, so the header is a leftover from when it was gated.
       resume: sessionId,
       resumeSessionAt: resumeAt,
       systemPrompt: globalClaudeMd
