@@ -973,7 +973,9 @@ async function main(): Promise<void> {
       await channel.sendFile(jid, buffer, filename, mimetype, caption);
       recordDelivery(
         jid,
-        caption ? `Sent file: ${filename} — ${caption}` : `Sent file: ${filename}`,
+        caption
+          ? `Sent file: ${filename} — ${caption}`
+          : `Sent file: ${filename}`,
       );
     },
     sendReaction: async (jid, emoji, messageId) => {
