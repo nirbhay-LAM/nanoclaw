@@ -190,7 +190,9 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const conversationsDir = '/workspace/group/conversations';
       fs.mkdirSync(conversationsDir, { recursive: true });
 
-      const date = new Date().toISOString().split('T')[0];
+      // Local date (container runs with TZ set), not toISOString(): UTC is
+      // already tomorrow every evening, which files the transcript a day late.
+      const date = new Date().toLocaleDateString('en-CA');
       const filename = `${date}-${name}.md`;
       const filePath = path.join(conversationsDir, filename);
 

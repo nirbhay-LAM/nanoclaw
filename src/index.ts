@@ -56,6 +56,7 @@ import { transcribe, transcribeWithDiarization } from './audio.js';
 import { generateImage } from './openai-image.js';
 import { redactSecrets } from './redact.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { getLocalDateParts } from './timezone.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -119,7 +120,9 @@ function archiveDailyConversation(groupFolder: string): void {
     return;
   }
 
-  const date = new Date().toISOString().split('T')[0];
+  // Local date, not toISOString(): the archive is named for the day the
+  // conversation happened, and UTC is already tomorrow every evening.
+  const { date } = getLocalDateParts(TIMEZONE);
   const content = formatConversationArchive(
     messages,
     date,

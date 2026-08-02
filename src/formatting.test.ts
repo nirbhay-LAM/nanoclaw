@@ -62,7 +62,7 @@ describe('formatMessages', () => {
 
   it('formats a single message as XML with context header', () => {
     const result = formatMessages([makeMsg()], TZ);
-    expect(result).toContain('<context timezone="UTC" />');
+    expect(result).toContain('<context timezone="UTC"');
     expect(result).toContain('<message sender="Alice"');
     expect(result).toContain('>hello</message>');
     expect(result).toContain('Jan 1, 2024');
@@ -107,7 +107,7 @@ describe('formatMessages', () => {
 
   it('handles empty array', () => {
     const result = formatMessages([], TZ);
-    expect(result).toContain('<context timezone="UTC" />');
+    expect(result).toContain('<context timezone="UTC"');
     expect(result).toContain('<messages>\n\n</messages>');
   });
 
@@ -119,7 +119,58 @@ describe('formatMessages', () => {
     );
     expect(result).toContain('1:30');
     expect(result).toContain('PM');
-    expect(result).toContain('<context timezone="America/New_York" />');
+    expect(result).toContain('<context timezone="America/New_York"');
+  });
+
+  // Regression: RSK built a plan with weeks running Tue-Mon because it had to
+  // infer "today" itself and then do weekday arithmetic. The header now states
+  // both outright.
+  describe('date anchor', () => {
+    it('states today and the weekday, resolved in the target timezone', () => {
+      const result = formatMessages(
+        [makeMsg()],
+        'America/Chicago',
+        new Date('2026-08-02T15:00:00.000Z'),
+      );
+      expect(result).toContain('today="2026-08-02"');
+      expect(result).toContain('weekday="Sunday"');
+    });
+
+    it('does not roll the date forward in the local evening', () => {
+      // The original bug: 8pm Aug 1 in Chicago is already Aug 2 in UTC, so any
+      // toISOString()-derived date reports tomorrow.
+      const evening = new Date('2026-08-02T01:00:00.000Z');
+      expect(evening.toISOString().split('T')[0]).toBe('2026-08-02');
+
+      const result = formatMessages([makeMsg()], 'America/Chicago', evening);
+      expect(result).toContain('today="2026-08-01"');
+      expect(result).toContain('weekday="Saturday"');
+    });
+
+    it('reports the correct weekday for the week that was got wrong', () => {
+      // Aug 3 2026 is a Monday; the bad plan treated Aug 4 as the week start.
+      const result = formatMessages(
+        [makeMsg()],
+        'America/Chicago',
+        new Date('2026-08-03T15:00:00.000Z'),
+      );
+      expect(result).toContain('today="2026-08-03"');
+      expect(result).toContain('weekday="Monday"');
+    });
+
+    it('resolves the same instant differently per timezone', () => {
+      // 8pm Aug 1 in Chicago is already Aug 2 in UTC and Tokyo.
+      const instant = new Date('2026-08-02T01:00:00.000Z');
+      expect(formatMessages([makeMsg()], 'America/Chicago', instant)).toContain(
+        'today="2026-08-01"',
+      );
+      expect(formatMessages([makeMsg()], 'UTC', instant)).toContain(
+        'today="2026-08-02"',
+      );
+      expect(formatMessages([makeMsg()], 'Asia/Tokyo', instant)).toContain(
+        'today="2026-08-02"',
+      );
+    });
   });
 });
 
