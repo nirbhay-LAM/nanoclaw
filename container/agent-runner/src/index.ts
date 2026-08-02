@@ -31,9 +31,35 @@ interface ContainerInput {
 
 }
 
+/**
+ * The SDK narrowed media_type to this literal union, so a bare `string` no
+ * longer assigns. Anything outside the set is not a valid image block.
+ */
+type SupportedImageMediaType =
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/gif'
+  | 'image/webp';
+
+const SUPPORTED_IMAGE_MEDIA_TYPES: readonly SupportedImageMediaType[] = [
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+];
+
+function toSupportedImageMediaType(
+  mediaType: string,
+): SupportedImageMediaType | null {
+  const normalized = mediaType.toLowerCase().trim();
+  return (
+    SUPPORTED_IMAGE_MEDIA_TYPES.find((m) => m === normalized) ?? null
+  );
+}
+
 interface ImageContentBlock {
   type: 'image';
-  source: { type: 'base64'; media_type: string; data: string };
+  source: { type: 'base64'; media_type: SupportedImageMediaType; data: string };
 }
 interface TextContentBlock {
   type: 'text';
@@ -413,9 +439,15 @@ async function runQuery(
     const blocks: ContentBlock[] = [];
     for (const img of containerInput.imageAttachments) {
       const imgPath = path.join('/workspace/group', img.relativePath);
+      const mediaType = toSupportedImageMediaType(img.mediaType);
+      if (!mediaType) {
+        // Skip rather than send a block the API will reject and lose the turn.
+        log(`Unsupported image media type "${img.mediaType}": ${imgPath}`);
+        continue;
+      }
       try {
         const data = fs.readFileSync(imgPath).toString('base64');
-        blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data } });
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
       } catch (err) {
         log(`Failed to load image: ${imgPath}`);
       }

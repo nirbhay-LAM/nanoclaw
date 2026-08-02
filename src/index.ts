@@ -91,6 +91,24 @@ let cursorBeforePipe: Record<string, string> = {};
 let crashRecoveryContext: Record<string, string[]> = {};
 let messageLoopRunning = false;
 
+/**
+ * Record something that actually reached the user, for crash recovery.
+ *
+ * The streamed-output path records its own sends inline, but the agent can also
+ * deliver over IPC — a document, or a message pushed mid-run. Those go out
+ * through a different code path, so without this the host concludes nothing was
+ * delivered, rolls the message cursor back, and retries the whole request. The
+ * agent then rebuilds and re-sends work the user already has, which is how the
+ * same document arrived twice.
+ *
+ * Keyed by the chat the content was delivered to. A main-group agent can send
+ * to a different group; if it crashes after doing so, the running group's
+ * rollback gate won't see that delivery. Rare enough to accept.
+ */
+function recordDelivery(chatJid: string, note: string): void {
+  (crashRecoveryContext[chatJid] ??= []).push(note);
+}
+
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 let statusTracker: StatusTracker;
@@ -472,7 +490,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     delete sessions[group.folder];
     deleteSession(group.folder);
 
-    if (outputSentToUser) {
+    // Anything recorded in crashRecoveryContext also counts as delivered — the
+    // agent can send a document or a message over IPC without ever producing
+    // streamed output, and re-running that request makes the user receive the
+    // same deliverable twice. Entries here can only be from this run: the map is
+    // cleared when consumed into the prompt above, and again on success below.
+    if (outputSentToUser || crashRecoveryContext[chatJid]?.length) {
       // Output was sent for the initial batch, so don't roll those back.
       // But if messages were piped AFTER that output, roll back to recover them.
       if (cursorBeforePipe[chatJid]) {
@@ -932,12 +955,14 @@ async function main(): Promise<void> {
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => {
+    sendMessage: async (jid, text) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
+      await channel.sendMessage(jid, text);
+      // Record only after the send resolves — a failed send delivered nothing.
+      recordDelivery(jid, text);
     },
-    sendFile: (jid, buffer, filename, mimetype, caption) => {
+    sendFile: async (jid, buffer, filename, mimetype, caption) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (!channel.sendFile) {
@@ -945,7 +970,11 @@ async function main(): Promise<void> {
           `Channel ${channel.name} does not support file sending`,
         );
       }
-      return channel.sendFile(jid, buffer, filename, mimetype, caption);
+      await channel.sendFile(jid, buffer, filename, mimetype, caption);
+      recordDelivery(
+        jid,
+        caption ? `Sent file: ${filename} — ${caption}` : `Sent file: ${filename}`,
+      );
     },
     sendReaction: async (jid, emoji, messageId) => {
       const channel = findChannel(channels, jid);
