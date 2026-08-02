@@ -139,6 +139,26 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
+/**
+ * Largest session transcript we will resume. Roughly 2M tokens at ~4 bytes per
+ * token — well clear of the 1M context window, while leaving room for the
+ * genuinely long sessions this group already accumulates (several are 1-8MB).
+ */
+const MAX_RESUMABLE_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+
+/** Size of a session's transcript in bytes, or null if it cannot be read. */
+export function transcriptSizeBytes(
+  sessionId: string,
+  projectDir = '/home/node/.claude/projects/-workspace-group',
+): number | null {
+  try {
+    return fs.statSync(path.join(projectDir, `${sessionId}.jsonl`)).size;
+  } catch {
+    // No transcript yet (fresh session) or unreadable — let the resume proceed.
+    return null;
+  }
+}
+
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
   const projectDir = path.dirname(transcriptPath);
   const indexPath = path.join(projectDir, 'sessions-index.json');
@@ -361,6 +381,30 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  // Refuse to resume a transcript that cannot fit the context window.
+  //
+  // A session grows without bound across runs. Once its transcript exceeds the
+  // window, every resume is rejected with "Prompt is too long" before any work
+  // starts, so the group is wedged until the session is cleared by hand — that
+  // happened with a 29MB (~7.5M token) transcript against a 1M window.
+  //
+  // Bytes are a coarse proxy for tokens, which is fine here: the aim is to
+  // catch a transcript that is orders of magnitude too big, not to predict the
+  // exact count. Starting fresh loses continuity for one turn; resuming loses
+  // the entire run, so failing open is the better trade.
+  if (sessionId) {
+    const size = transcriptSizeBytes(sessionId);
+    if (size !== null && size > MAX_RESUMABLE_TRANSCRIPT_BYTES) {
+      log(
+        `Session ${sessionId} transcript is ${(size / 1024 / 1024).toFixed(1)}MB, ` +
+          `over the ${(MAX_RESUMABLE_TRANSCRIPT_BYTES / 1024 / 1024).toFixed(0)}MB resume limit — ` +
+          `starting a fresh session instead of resuming.`,
+      );
+      sessionId = undefined;
+      resumeAt = undefined;
+    }
+  }
+
   const stream = new MessageStream();
   stream.push(prompt);
 
