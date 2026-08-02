@@ -3,6 +3,7 @@
  * Spawns agent execution in containers and handles IPC
  */
 import { ChildProcess, exec, spawn } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -55,6 +56,110 @@ interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly: boolean;
+}
+
+/** Records the source each group's agent-runner copy was last synced from. */
+const AGENT_RUNNER_MANIFEST = '.source-manifest.json';
+
+type FileHashes = Record<string, string>;
+
+/** sha256 of every file under `dir`, keyed by path relative to it. */
+function hashTree(dir: string): FileHashes {
+  const out: FileHashes = {};
+  const walk = (current: string, prefix: string): void => {
+    for (const name of fs.readdirSync(current).sort()) {
+      if (prefix === '' && name === AGENT_RUNNER_MANIFEST) continue;
+      const full = path.join(current, name);
+      const rel = prefix ? `${prefix}/${name}` : name;
+      if (fs.statSync(full).isDirectory()) walk(full, rel);
+      else
+        out[rel] = crypto
+          .createHash('sha256')
+          .update(fs.readFileSync(full))
+          .digest('hex');
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+
+/** Files that differ between two hash trees, including added and removed. */
+export function diffHashes(a: FileHashes, b: FileHashes): string[] {
+  const names = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...names].filter((n) => a[n] !== b[n]).sort();
+}
+
+function readManifest(dir: string): FileHashes | null {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(dir, AGENT_RUNNER_MANIFEST), 'utf-8'),
+    ) as FileHashes;
+  } catch {
+    return null;
+  }
+}
+
+function writeManifest(dir: string, hashes: FileHashes): void {
+  fs.writeFileSync(
+    path.join(dir, AGENT_RUNNER_MANIFEST),
+    JSON.stringify(hashes, null, 2) + '\n',
+  );
+}
+
+export type AgentRunnerSyncResult =
+  | 'seeded'
+  | 'synced'
+  | 'adopted'
+  | 'up-to-date'
+  | 'customized'
+  | 'no-source';
+
+/**
+ * Keep a group's agent-runner copy current without destroying local edits.
+ *
+ * The copy is writable so a group can customize its agent code, and the
+ * container compiles *it* rather than the repo. Seeding once and never
+ * refreshing meant repo changes silently never reached a running group — that
+ * left this deployment on a four-month-old runner, pinned to a superseded
+ * model, with nothing to surface it.
+ *
+ * The manifest records what was last written, which distinguishes "nobody has
+ * touched this, so it is safe to update" from "somebody customized this, leave
+ * it alone". A customized copy is reported rather than silently overwritten.
+ */
+export function syncAgentRunnerSource(
+  sourceDir: string,
+  groupDir: string,
+): AgentRunnerSyncResult {
+  if (!fs.existsSync(sourceDir)) return 'no-source';
+
+  const sourceHashes = hashTree(sourceDir);
+
+  if (!fs.existsSync(groupDir)) {
+    fs.cpSync(sourceDir, groupDir, { recursive: true });
+    writeManifest(groupDir, sourceHashes);
+    return 'seeded';
+  }
+
+  const currentHashes = hashTree(groupDir);
+  const manifest = readManifest(groupDir);
+
+  if (!manifest) {
+    // Pre-dates the manifest. Adopt only if it still matches the source
+    // exactly; otherwise assume the difference is deliberate.
+    if (diffHashes(currentHashes, sourceHashes).length === 0) {
+      writeManifest(groupDir, sourceHashes);
+      return 'adopted';
+    }
+    return 'customized';
+  }
+
+  if (diffHashes(currentHashes, manifest).length > 0) return 'customized';
+  if (diffHashes(currentHashes, sourceHashes).length === 0) return 'up-to-date';
+
+  fs.cpSync(sourceDir, groupDir, { recursive: true, force: true });
+  writeManifest(groupDir, sourceHashes);
+  return 'synced';
 }
 
 function buildVolumeMounts(
@@ -186,8 +291,23 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  const syncResult = syncAgentRunnerSource(agentRunnerSrc, groupAgentRunnerDir);
+  if (syncResult === 'customized') {
+    logger.warn(
+      {
+        group: group.folder,
+        drifted: diffHashes(
+          hashTree(groupAgentRunnerDir),
+          hashTree(agentRunnerSrc),
+        ),
+      },
+      'Group agent-runner copy differs from source and was left untouched — it will not pick up repo changes until reconciled',
+    );
+  } else if (syncResult === 'synced' || syncResult === 'seeded') {
+    logger.info(
+      { group: group.folder, result: syncResult },
+      'Group agent-runner source updated from repo',
+    );
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
