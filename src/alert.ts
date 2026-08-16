@@ -51,7 +51,10 @@ function writeState(state: AlertState): void {
  * The message can carry an error string, so it is not assumed to be safe.
  */
 export function escapeAppleScript(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ');
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/[\r\n]+/g, ' ');
 }
 
 /** True when this key has not alerted inside the cooldown window. */
