@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { alertOperator, clearAlert } from '../alert.js';
 import { EventEmitter } from 'events';
 
 // --- Mocks ---
@@ -12,6 +13,11 @@ vi.mock('../config.js', () => ({
 }));
 
 // Mock logger
+vi.mock('../alert.js', () => ({
+  alertOperator: vi.fn(() => true),
+  clearAlert: vi.fn(),
+}));
+
 vi.mock('../logger.js', () => ({
   logger: {
     debug: vi.fn(),
@@ -340,7 +346,9 @@ describe('WhatsAppChannel', () => {
       // The channel should attempt to reconnect (calls connectInternal again)
     });
 
-    it('exits on loggedOut disconnect', async () => {
+    it('alerts and exits on loggedOut disconnect', async () => {
+      // A logout is terminal and cannot be reported over WhatsApp itself, so
+      // the operator must be alerted out of band before the process goes.
       const mockExit = vi
         .spyOn(process, 'exit')
         .mockImplementation(() => undefined as never);
@@ -350,12 +358,39 @@ describe('WhatsAppChannel', () => {
 
       await connectChannel(channel);
 
+      // Fake timers only after connecting — connectChannel resolves through
+      // real timers and would otherwise hang.
+      vi.useFakeTimers();
+
       // Disconnect with loggedOut reason (401)
       triggerDisconnect(401);
 
       expect(channel.isConnected()).toBe(false);
-      expect(mockExit).toHaveBeenCalledWith(0);
+      expect(alertOperator).toHaveBeenCalledWith(
+        'NanoClaw is down',
+        expect.stringContaining('/setup'),
+        expect.objectContaining({ key: 'whatsapp-logged-out' }),
+      );
+
+      // Exit is deferred so launchd does not rapid-respawn and give up, which
+      // is what turned the August outage into a silent one.
+      expect(mockExit).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(5000);
+      expect(mockExit).toHaveBeenCalledWith(1);
+
+      vi.useRealTimers();
       mockExit.mockRestore();
+    });
+
+    it('clears the down alert once reconnected', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      // connectChannel drives a successful open, so the cooldown must be reset
+      // or a later outage would be suppressed by an earlier alert.
+      expect(clearAlert).toHaveBeenCalledWith('whatsapp-logged-out');
     });
 
     it('retries reconnection after 5s on failure', async () => {

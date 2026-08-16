@@ -1,4 +1,3 @@
-import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -30,6 +29,7 @@ import { isVoiceMessage, processAudio } from '../audio.js';
 import { isImageMessage, processImage } from '../image.js';
 import { isVideoMessage, processVideo } from '../video.js';
 import { logger } from '../logger.js';
+import { alertOperator, clearAlert } from '../alert.js';
 import { wrapBaileysLogger } from './baileys-logger.js';
 import { isAudioMime, isDocumentMime } from '../mime.js';
 
@@ -121,11 +121,10 @@ export class WhatsAppChannel implements Channel {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        const msg =
-          'WhatsApp authentication required. Run /setup in Claude Code.';
-        logger.error(msg);
-        exec(
-          `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
+        alertOperator(
+          'NanoClaw needs re-authentication',
+          'WhatsApp authentication required. Run /setup in Claude Code.',
+          { key: 'whatsapp-qr-required' },
         );
         setTimeout(() => process.exit(1), 1000);
       }
@@ -148,12 +147,26 @@ export class WhatsAppChannel implements Channel {
         if (shouldReconnect) {
           this.scheduleReconnect(1);
         } else {
-          logger.info('Logged out. Run /setup to re-authenticate.');
-          process.exit(0);
+          // A logout is terminal: every restart will hit the same 401. Nothing
+          // can be sent over WhatsApp to say so, so alert the desktop instead.
+          alertOperator(
+            'NanoClaw is down',
+            'WhatsApp logged out — run /setup in Claude Code to re-link. Nothing will run until then.',
+            { key: 'whatsapp-logged-out' },
+          );
+          // Exit non-zero and not instantly: launchd restarts on any exit, and
+          // a tight loop makes it give up entirely, which is how the August
+          // outage ended up invisible rather than merely broken.
+          setTimeout(() => process.exit(1), 5000);
         }
       } else if (connection === 'open') {
         this.connected = true;
         logger.info('Connected to WhatsApp');
+        // Reset the cooldown so a later outage alerts at once rather than
+        // being suppressed by an alert raised before this recovery.
+        clearAlert('whatsapp-logged-out');
+        clearAlert('whatsapp-qr-required');
+        clearAlert('nanoclaw-process-down');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
         this.sock.sendPresenceUpdate('available').catch((err) => {
